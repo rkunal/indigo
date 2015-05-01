@@ -59,8 +59,8 @@
   Indigo.DocumentView = Backbone.View.extend({
     el: 'body',
     events: {
-      'click .btn.save': 'save',
-      'click .btn.delete': 'delete',
+      'click .workspace-buttons .btn.save': 'save',
+      'click .workspace-buttons .btn.delete': 'delete',
       'hidden.bs.tab a[href="#content-tab"]': 'tocDeselected',
       'shown.bs.tab a[href="#preview-tab"]': 'renderPreview',
     },
@@ -69,7 +69,7 @@
       var library = new Indigo.Library(),
           document_id = $('[data-document-id]').data('document-id') || null;
 
-      this.$saveBtn = $('.btn.save');
+      this.$saveBtn = $('.workspace-buttons .btn.save');
 
       var info = document_id ? {id: document_id} : {
         id: null,
@@ -83,7 +83,6 @@
       this.document = new Indigo.Document(info, {collection: library});
       this.document.on('change', this.setDirty, this);
       this.document.on('change', this.allowDelete, this);
-      this.document.on('sync', this.setModelClean, this);
 
       this.documentContent = new Indigo.DocumentContent({id: document_id});
       this.documentContent.on('change', this.documentContentChanged, this);
@@ -105,7 +104,8 @@
       this.tocView.on('item-selected', this.showEditor, this);
 
       this.bodyEditorView = new Indigo.DocumentEditorView({
-        model: this.documentDom,
+        model: this.document,
+        xmlModel: this.documentDom,
         rawModel: this.documentContent,
         tocView: this.tocView,
       });
@@ -129,7 +129,7 @@
     },
 
     documentContentChanged: function() {
-      this.documentDom.setXml(this.documentContent.get('content'));
+      this.documentDom.setXml(prettyPrintXml(this.documentContent.get('content')));
     },
 
     windowUnloading: function(e) {
@@ -139,8 +139,10 @@
       }
     },
 
-    showEditor: function() {
-      this.$el.find('a[href="#content-tab"]').click();
+    showEditor: function(item) {
+      if (item) {
+        this.$el.find('a[href="#content-tab"]').click();
+      }
     },
 
     setDirty: function() {
@@ -161,7 +163,10 @@
         this.$saveBtn
           .addClass('btn-default')
           .removeClass('btn-info')
-          .prop('disabled', true);
+          .prop('disabled', true)
+          .find('.fa')
+            .removeClass('fa-pulse fa-spinner')
+            .addClass('fa-save');
       }
     },
 
@@ -178,11 +183,18 @@
       var self = this;
       var is_new = self.document.isNew();
       var failed = function(request) {
-        self.$saveBtn.prop('disabled', false);
+        self.$saveBtn
+          .prop('disabled', false)
+          .find('.fa')
+            .removeClass('fa-pulse fa-spinner')
+            .addClass('fa-save');
       };
 
-      this.$saveBtn.prop('disabled', true);
-
+      this.$saveBtn
+        .prop('disabled', true)
+        .find('.fa')
+          .removeClass('fa-save')
+          .addClass('fa-pulse fa-spinner');
 
       // We save the content first, and then save
       // the properties on top of it, so that content
@@ -211,22 +223,25 @@
             data = this.document.toJSON();
 
         data.content = this.documentDom.toXml();
-        data = JSON.stringify({'document': data});
+        data = JSON.stringify({
+          'inputformat': 'application/json',
+          'outputformat': 'text/html',
+          'content': data});
 
         $.ajax({
-          url: '/api/render',
+          url: '/api/convert',
           type: "POST",
           data: data,
           contentType: "application/json; charset=utf-8",
           dataType: "json"})
           .then(function(response) {
-            $('#preview-tab .an-container').html(response.html);
+            $('#preview-tab .an-container').html(response.output);
             self.previewDirty = false;
           });
       }
     },
 
-    tocDeselected: function() {
+    tocDeselected: function(e) {
       this.tocView.trigger('deselect');
     },
 

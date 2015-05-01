@@ -1,10 +1,10 @@
 /* akoma ntoso styling */
 
-.an-act, .an-preamble, .an-chapter, .an-part, .an-section, .an-subsection, .an-blockList {
+.an-akomaNtoso, .an-act, .an-coverpage, .an-preface, .an-preamble, .an-conclusions, .an-chapter, .an-part, .an-section, .an-subsection, .an-blockList {
   display: block;
 }
 
-.title {
+.coverpage {
   text-align: center;
   margin-bottom: 2em;
 
@@ -14,8 +14,18 @@
 }
 
 h1 {
+  font-size: 24px;
+  line-height: 28px;
+}
+
+h2, .an-heading {
+  display: block;
+  margin-top: 20px;
+  margin-bottom: 10px;
+
   text-align: center;
   font-size: 18px;
+  font-weight: 500;
   line-height: 20px;
 }
 

@@ -1,18 +1,18 @@
 import re
 import logging
 
-from django.template.loader import render_to_string
 from django.http import Http404
 from django.shortcuts import get_object_or_404
+from django.template.loader import find_template, render_to_string, TemplateDoesNotExist
 
-from rest_framework import viewsets
-from rest_framework.exceptions import ParseError, ValidationError
+from rest_framework.exceptions import ValidationError
 from rest_framework.views import APIView
+from rest_framework.reverse import reverse
 from rest_framework import mixins, viewsets, renderers
 from rest_framework.response import Response
 from rest_framework.decorators import detail_route
+import lxml.etree as ET
 from lxml.etree import LxmlError
-import arrow
 
 from .models import Document
 from .serializers import DocumentSerializer, AkomaNtosoRenderer, ConvertSerializer
@@ -24,8 +24,84 @@ log = logging.getLogger(__name__)
 
 FORMAT_RE = re.compile('\.([a-z0-9]+)$')
 
+
+def document_to_html(document):
+    """ Render an entire document to HTML. """
+    # use this to render the bulk of the document with the Cobalt XSLT renderer
+    renderer = HTMLRenderer(act=document.doc)
+    body_html = renderer.render_xml(document.document_xml)
+
+    # find
+    template_name = find_document_template(document)
+
+    # and then render some boilerplate around it
+    return render_to_string(template_name, {
+        'document': document,
+        'content_html': body_html,
+        'renderer': renderer,
+    })
+
+
+def find_document_template(document):
+    """ Return the filename of a template to use to render this document.
+
+    This takes into account the country, type, subtype and language of the document,
+    providing a number of opportunities to adjust the rendering logic.
+    """
+    uri = document.doc.frbr_uri
+    doctype = uri.doctype
+
+    options = []
+    if uri.subtype:
+        options.append('_'.join([doctype, uri.subtype, document.language, uri.country]))
+        options.append('_'.join([doctype, uri.subtype, document.language]))
+        options.append('_'.join([doctype, uri.subtype, uri.country]))
+        options.append('_'.join([doctype, uri.subtype]))
+
+    options.append('_'.join([doctype, document.language, uri.country]))
+    options.append('_'.join([doctype, document.language]))
+    options.append('_'.join([doctype, uri.country]))
+    options.append(doctype)
+
+    options = [f + '.html' for f in options]
+
+    for option in options:
+        try:
+            if find_template(option):
+                return option
+        except TemplateDoesNotExist:
+            pass
+
+    raise ValueError("Couldn't find a template to use for %s. Tried: %s" % (uri, ', '.join(options)))
+
+
+class DocumentViewMixin(object):
+    def table_of_contents(self, document):
+        # this updates the TOC entries by adding a 'url' component
+        # based on the document's URI and the path of the TOC subcomponent
+        uri = document.doc.frbr_uri
+        toc = document.table_of_contents()
+
+        def add_url(item):
+            uri.expression_component = item['component']
+            uri.expression_subcomponent = item.get('subcomponent')
+
+            item['url'] = reverse(
+                'published-document-detail',
+                request=self.request,
+                kwargs={'frbr_uri': uri.expression_uri()[1:]})
+
+            for kid in item.get('children', []):
+                add_url(kid)
+
+        for item in toc:
+            add_url(item)
+
+        return toc
+
+
 # REST API
-class DocumentViewSet(viewsets.ModelViewSet):
+class DocumentViewSet(DocumentViewMixin, viewsets.ModelViewSet):
     """
     API endpoint that allows Documents to be viewed or edited.
     """
@@ -35,26 +111,6 @@ class DocumentViewSet(viewsets.ModelViewSet):
     def perform_destroy(self, instance):
         instance.deleted = True
         instance.save()
-
-    @detail_route(methods=['GET', 'PUT'])
-    def body(self, request, *args, **kwargs):
-        """ This exposes a GET and PUT resource at ``/api/documents/1/body`` which allows
-        the body of the document to be fetched and set independently of the metadata. This
-        is useful because the body can be large.
-        """
-        instance = self.get_object()
-
-        if request.method == 'GET':
-            return Response({'body': instance.body})
-
-        if request.method == 'PUT':
-            try:
-                instance.body = request.data.get('body')
-                instance.save()
-            except LxmlError as e:
-                raise ValidationError({'body': ["Invalid XML: %s" % e.message]})
-
-            return Response({'body': instance.body})
 
     @detail_route(methods=['GET', 'PUT'])
     def content(self, request, *args, **kwargs):
@@ -81,11 +137,11 @@ class DocumentViewSet(viewsets.ModelViewSet):
         """ This exposes a GET resource at ``/api/documents/1/toc`` which gives
         a table of contents for the document.
         """
-        instance = self.get_object()
-        return Response({'toc': self.get_object().table_of_contents()})
+        return Response({'toc': self.table_of_contents(self.get_object())})
 
 
-class PublishedDocumentDetailView(mixins.RetrieveModelMixin,
+class PublishedDocumentDetailView(DocumentViewMixin,
+                                  mixins.RetrieveModelMixin,
                                   mixins.ListModelMixin,
                                   viewsets.GenericViewSet):
     """
@@ -107,6 +163,20 @@ class PublishedDocumentDetailView(mixins.RetrieveModelMixin,
         # list documents with a prefix URI match.
         try:
             self.frbr_uri = FrbrUri.parse(self.kwargs['frbr_uri'])
+
+            # in a URL like
+            #
+            #   /act/1980/1/toc
+            #
+            # don't mistake 'toc' for a language, it's really equivalent to
+            #
+            #   /act/1980/1/eng/toc
+            #
+            # if eng is the default language.
+            if self.frbr_uri.language == 'toc':
+                self.frbr_uri.language = self.frbr_uri.default_language
+                self.frbr_uri.expression_component = 'toc'
+
             return self.retrieve(request)
         except ValueError:
             return self.list(request)
@@ -119,26 +189,44 @@ class PublishedDocumentDetailView(mixins.RetrieveModelMixin,
 
     def retrieve(self, request, *args, **kwargs):
         component = self.frbr_uri.expression_component or 'main'
+        subcomponent = self.frbr_uri.expression_subcomponent
         format = self.request.accepted_renderer.format
 
         # get the document
         document = self.get_object()
 
-        if (component, format) == ('main', 'xml'):
-            return Response(document.document_xml)
+        if subcomponent:
+            element = document.doc.get_subcomponent(component, subcomponent)
 
-        if (component, format) == ('main', 'html'):
-            html = HTMLRenderer().render_xml(document.document_xml)
-            return Response(html)
+        else:
+            # special cases of the entire document
 
-        # table of content
-        if (component, format) == ('toc', 'json'):
-            serializer = self.get_serializer(document)
-            return Response({'toc': document.table_of_contents()})
+            # table of contents
+            if (component, format) == ('toc', 'json'):
+                serializer = self.get_serializer(document)
+                return Response({'toc': self.table_of_contents(document)})
 
-        if (component, format) == ('main', 'json'):
-            serializer = self.get_serializer(document)
-            return Response(serializer.data)
+            # json description
+            if (component, format) == ('main', 'json'):
+                serializer = self.get_serializer(document)
+                return Response(serializer.data)
+
+            # entire thing
+            if (component, format) == ('main', 'xml'):
+                return Response(document.document_xml)
+
+            # the item we're interested in
+            element = document.doc.components().get(component)
+
+        if element:
+            if format == 'html':
+                if component == 'main' and not subcomponent:
+                    return Response(document_to_html(document))
+                else:
+                    return Response(HTMLRenderer(act=document.doc).render(element))
+
+            if format == 'xml':
+                return Response(ET.tostring(element, pretty_print=True))
 
         raise Http404
 
@@ -150,7 +238,7 @@ class PublishedDocumentDetailView(mixins.RetrieveModelMixin,
 
         if obj.language != self.frbr_uri.language:
             raise Http404("The document %s exists but is not available in the language '%s'"
-                    % (self.frbr_uri.work_uri(), self.frbr_uri.language))
+                          % (self.frbr_uri.work_uri(), self.frbr_uri.language))
 
         # May raise a permission denied
         self.check_object_permissions(self.request, obj)
@@ -184,28 +272,36 @@ class ConvertView(APIView):
         return self.handle_output(document, output_format)
 
     def handle_input(self):
+        self.fragment = self.request.data.get('fragment')
         document = None
         serializer = ConvertSerializer(data=self.request.data)
         serializer.is_valid(raise_exception=True)
+
+        input_format = serializer.validated_data.get('inputformat')
 
         upload = self.request.data.get('file')
         if upload:
             # we got a file
             try:
-                document = Importer().import_from_upload(upload)
+                document = self.get_importer().import_from_upload(upload)
+                return serializer, document
             except ValueError as e:
                 log.error("Error during import: %s" % e.message, exc_info=e)
                 raise ValidationError({'file': e.message or "error during import"})
 
-        else:
-            # handle non-file inputs
-            input_format = serializer.validated_data.get('inputformat')
-            if input_format == 'json':
-                doc_serializer = DocumentSerializer(
-                        data=self.request.data['content'],
-                        context={'request': self.request})
-                doc_serializer.is_valid(raise_exception=True)
-                document = doc_serializer.update_document(Document())
+        elif input_format == 'application/json':
+            doc_serializer = DocumentSerializer(
+                data=self.request.data['content'],
+                context={'request': self.request})
+            doc_serializer.is_valid(raise_exception=True)
+            document = doc_serializer.update_document(Document())
+
+        elif input_format == 'text/plain':
+            try:
+                document = self.get_importer().import_from_text(self.request.data['content'])
+            except ValueError as e:
+                log.error("Error during import: %s" % e.message, exc_info=e)
+                raise ValidationError({'content': e.message or "error during import"})
 
         if not document:
             raise ValidationError("Nothing to convert! Either 'file' or 'content' must be provided.")
@@ -213,70 +309,32 @@ class ConvertView(APIView):
         return serializer, document
 
     def handle_output(self, document, output_format):
-        if output_format == 'json':
+        if output_format == 'application/json':
+            if self.fragment:
+                raise ValidationError("Cannot output application/json from a fragment")
+
             doc_serializer = DocumentSerializer(instance=document, context={'request': self.request})
             data = doc_serializer.data
             data['content'] = document.document_xml
             return Response(data)
 
-        if output_format == 'xml':
-            return Response(document.document_xml)
+        if output_format == 'application/xml':
+            if self.fragment:
+                return Response({'output': document.to_xml()})
+            else:
+                return Response({'output': document.document_xml})
 
-        if output_format == 'html':
-            renderer = HTMLRenderer()
-            body_html = renderer.render_xml(document.document_xml)
-            return Response(body_html)
+        if output_format == 'text/html':
+            if self.fragment:
+                return Response(HTMLRenderer().render(document.to_xml()))
+            else:
+                return Response({'output': document_to_html(document)})
 
         # TODO: handle plain text output
 
+    def get_importer(self):
+        importer = Importer()
+        importer.fragment = self.request.data.get('fragment')
+        importer.fragment_id_prefix = self.request.data.get('id_prefix')
 
-class RenderAPI(APIView):
-    def post(self, request, format=None):
-        """
-        Render a document into HTML. The request MUST include a JSON description of
-        what to render.
-
-        Parameters:
-
-            format: "html" (default)
-            document: { ... }
-
-        To determine what to render, include a document description. If the description has an
-        id, the missing details are filled in from the existing document in the database.
-
-            {
-              "document": {
-                "title": "A title",
-                "body": "... xml ..."
-              }
-            }
-        """
-
-        if u'document' in request.data:
-            data = request.data['document']
-            # try to load the document data
-            if 'id' in data:
-                document = Document.objects.filter(id=data['id']).first()
-            else:
-                document = Document()
-
-            # update the model, but don't save it
-            ds = DocumentSerializer(instance=document, data=data)
-            if ds.is_valid(raise_exception=True):
-                ds.update_document(document)
-
-        else:
-            raise ParseError("Required parameter 'document' is missing.")
-
-        if not document.document_xml:
-            html = ""
-        else:
-            renderer = HTMLRenderer()
-            body_html = renderer.render_xml(document.document_xml)
-
-            html = render_to_string('html_preview.html', {
-                'document': document,
-                'body_html': body_html,
-                })
-
-        return Response({'html': html})
+        return importer

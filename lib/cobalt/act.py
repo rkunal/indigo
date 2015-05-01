@@ -1,7 +1,7 @@
 import re
-from datetime import date
+from collections import OrderedDict
 
-from lxml import objectify 
+from lxml import objectify
 from lxml import etree
 from lxml.html import _collect_string_content
 import arrow
@@ -9,8 +9,11 @@ import arrow
 from .uri import FrbrUri
 
 encoding_re = re.compile('encoding="[\w-]+"')
+# eg. schedule1
+component_id = re.compile('([^0-9]+)([0-9]+)')
 
 DATE_FORMAT = "%Y-%m-%d"
+
 
 def datestring(value):
     if value is None:
@@ -21,7 +24,28 @@ def datestring(value):
         return value.strftime(DATE_FORMAT)
 
 
-class Act(object):
+class Base(object):
+    def __init__(self, xml=None):
+        encoding = encoding_re.search(xml, 0, 200)
+        if encoding:
+            # lxml doesn't like unicode strings with an encoding element, so
+            # change to bytes
+            xml = xml.encode('utf-8')
+
+        self.root = objectify.fromstring(xml)
+        self.namespace = self.root.nsmap[None]
+
+        self._maker = objectify.ElementMaker(annotate=False, namespace=self.namespace, nsmap=self.root.nsmap)
+
+    def to_xml(self):
+        return etree.tostring(self.root, encoding='utf-8', pretty_print=True)
+
+
+class Fragment(Base):
+    pass
+
+
+class Act(Base):
     """
     An act is a lightweight wrapper around an `Akoma Ntoso 2.0 XML <http://www.akomantoso.org/>`_ act document.
     It provides methods to help access and manipulate the underlying XML directly, in particular
@@ -42,20 +66,11 @@ class Act(object):
         if not xml:
             # use an empty document
             xml = EMPTY_DOCUMENT
+        super(Act, self).__init__(xml)
 
-        encoding = encoding_re.search(xml, 0, 200)
-        if encoding:
-            # lxml doesn't like unicode strings with an encoding element, so
-            # change to bytes
-            xml = xml.encode('utf-8')
-
-        self.root = objectify.fromstring(xml)
-        self.meta = self.root.act.meta
-        self.body = self.root.act.body
-
-        self.namespace = self.root.nsmap[None]
-        self._maker = objectify.ElementMaker(annotate=False, namespace=self.namespace, nsmap=self.root.nsmap)
-
+        self.act = self.root.act
+        self.meta = self.act.meta
+        self.body = self.act.body
 
     @property
     def title(self):
@@ -75,7 +90,6 @@ class Act(object):
     def work_date(self, value):
         self.meta.identification.FRBRWork.FRBRdate.set('date', datestring(value))
 
-
     @property
     def expression_date(self):
         """ Date from the FRBRExpression element """
@@ -85,7 +99,6 @@ class Act(object):
     def expression_date(self, value):
         self.meta.identification.FRBRExpression.FRBRdate.set('date', datestring(value))
 
-
     @property
     def manifestation_date(self):
         """ Date from the FRBRManifestation element """
@@ -94,7 +107,6 @@ class Act(object):
     @manifestation_date.setter
     def manifestation_date(self, value):
         self.meta.identification.FRBRManifestation.FRBRdate.set('date', datestring(value))
-
 
     @property
     def publication_name(self):
@@ -108,7 +120,6 @@ class Act(object):
         pub.set('name', value)
         pub.set('showAs', value)
 
-
     @property
     def publication_date(self):
         """ Date of the publication """
@@ -118,8 +129,7 @@ class Act(object):
     @publication_date.setter
     def publication_date(self, value):
         self._ensure('meta.publication', after=self.meta.identification)\
-                .set('date', datestring(value))
-
+            .set('date', datestring(value))
 
     @property
     def publication_number(self):
@@ -130,8 +140,7 @@ class Act(object):
     @publication_number.setter
     def publication_number(self, value):
         self._ensure('meta.publication', after=self.meta.identification)\
-                .set('number', value)
-
+            .set('number', value)
 
     @property
     def language(self):
@@ -154,19 +163,32 @@ class Act(object):
             return FrbrUri.empty()
 
     @frbr_uri.setter
-    def frbr_uri(self, value):
-        if not isinstance(value, FrbrUri):
-            value = FrbrUri.parse(value)
+    def frbr_uri(self, uri):
+        if not isinstance(uri, FrbrUri):
+            uri = FrbrUri.parse(uri)
 
-        self.meta.identification.FRBRWork.FRBRuri.set('value', value.work_uri())
+        uri.language = self.meta.identification.FRBRExpression.FRBRlanguage.get('language', 'eng')
 
-        if value.expression_date is None:
-            value.expression_date = ''
+        if uri.expression_date is None:
+            uri.expression_date = ''
 
-        value.language = self.meta.identification.FRBRExpression.FRBRlanguage.get('language', 'eng')
-        self.meta.identification.FRBRExpression.FRBRuri.set('value', value.expression_uri())
-        self.meta.identification.FRBRManifestation.FRBRuri.set('value', value.expression_uri())
+        if uri.work_component is None:
+            uri.work_component = 'main'
 
+        # set URIs of the main document and components
+        for component, element in self.components().iteritems():
+            uri.work_component = component
+            ident = element.find('.//{*}meta/{*}identification')
+
+            ident.FRBRWork.FRBRuri.set('value', uri.uri())
+            ident.FRBRWork.FRBRthis.set('value', uri.work_uri())
+            ident.FRBRWork.FRBRcountry.set('value', uri.country)
+
+            ident.FRBRExpression.FRBRuri.set('value', uri.expression_uri(False))
+            ident.FRBRExpression.FRBRthis.set('value', uri.expression_uri())
+
+            ident.FRBRManifestation.FRBRuri.set('value', uri.expression_uri(False))
+            ident.FRBRManifestation.FRBRthis.set('value', uri.expression_uri())
 
     @property
     def year(self):
@@ -183,9 +205,6 @@ class Act(object):
         """ The nature of the document, such as an act, derived from :data:`frbr_uri`. Read-only. """
         return self.frbr_uri.doctype
 
-    def to_xml(self):
-        return etree.tostring(self.root, pretty_print=True)
-
     @property
     def body_xml(self):
         """ The raw XML string of the `body` element of the document. When
@@ -199,22 +218,64 @@ class Act(object):
         self.body.getparent().replace(self.body, new_body)
         self.body = new_body
 
+    def components(self):
+        """ Get an `OrderedDict` of component name to :class:`lxml.objectify.ObjectifiedElement`
+        objects.
+        """
+        components = OrderedDict()
+        components['main'] = self.act
+
+        # components/schedules
+        for doc in self.root.iterfind('./{*}components/{*}component/{*}doc'):
+            name = doc.meta.identification.FRBRWork.FRBRthis.get('value').split('/')[-1]
+            components[name] = doc
+
+        return components
+
     def table_of_contents(self):
         """ Get the table of contents of this document as a list of :class:`TOCElement` instances. """
 
-        child_types = [
-            '{%s}%s' % (self.namespace, n)
-            for n in ['part', 'chapter', 'section']]
+        interesting = set('{%s}%s' % (self.namespace, s) for s in [
+            'coverpage', 'preface', 'preamble', 'part', 'chapter', 'section', 'conclusions'])
 
-        def children(node):
-            return node.iterchildren(*child_types)
+        def generate_toc(component, elements):
+            items = []
+            for e in elements:
+                if e.tag in interesting:
+                    item = TOCElement(e, component)
+                    item.children = generate_toc(component, e.iterchildren())
+                    items.append(item)
+                else:
+                    items += generate_toc(component, e.iterchildren())
+            return items
 
-        def generate_toc(node):
-            elem = TOCElement(node)
-            elem.children = [generate_toc(c) for c in children(node)]
-            return elem
+        toc = []
+        for component, element in self.components().iteritems():
+            if component != "main":
+                # non-main components are items in their own right
+                item = TOCElement(element, component)
+                item.children = generate_toc(component, [element])
+                toc += [item]
+            else:
+                toc += generate_toc(component, [element])
 
-        return [generate_toc(c) for c in children(self.body)]
+        return toc
+
+    def get_subcomponent(self, component, subcomponent):
+        """ Get the named subcomponent in this document, such as `chapter/2` or 'section/13A'.
+        :class:`lxml.objectify.ObjectifiedElement` or `None`.
+        """
+        def search_toc(items):
+            for item in items:
+                if item.component == component and item.subcomponent == subcomponent:
+                    return item.element
+
+                if item.children:
+                    found = search_toc(item.children)
+                    if found:
+                        return found
+
+        return search_toc(self.table_of_contents())
 
     def _ensure(self, name, after):
         """ Hack help to get an element if it exists, or create it if it doesn't.
@@ -231,7 +292,6 @@ class Act(object):
     def _make(self, elem):
         return getattr(self._maker, elem)()
 
-
     def _get(self, name, root=None):
         parts = name.split('.')
         node = root or self
@@ -243,53 +303,78 @@ class Act(object):
                 return None
         return node
 
+
 class TOCElement(object):
     """
     An element in the table of contents of a document, such as a chapter, part or section.
 
-    :ivar element: :class:`lxml.objectify.ObjectifiedElement` the XML element of this TOC element
-    :ivar type: node type, one of: ``chapter, part, section``
-    :ivar id: XML id string of the node in the document, may be None
-    :ivar heading: heading for this element, excluding the number, may be None
-    :ivar num: number of this element, as a string, may be None
     :ivar children: further TOC elements contained in this one, may be None or empty
+    :ivar element: :class:`lxml.objectify.ObjectifiedElement` the XML element of this TOC element
+    :ivar heading: heading for this element, excluding the number, may be None
+    :ivar id: XML id string of the node in the document, may be None
+    :ivar num: number of this element, as a string, may be None
+    :ivar subcomponent: name of this subcomponent, used by :meth:`Act.get_subcomponent`, may be None
+    :ivar type: node type, one of: ``chapter, part, section``
     """
 
-    def __init__(self, node, children=None):
-        try:
-            heading = node.heading
-        except AttributeError:
-            heading = None
+    def __init__(self, node, component, children=None):
+        self.element = node
+        self.type = node.tag.split('}', 1)[-1]
+        self.id = node.get('id')
+
+        if self.type == 'doc':
+            # component, get the title from the alias
+            heading = node.find('./{*}meta/{*}FRBRalias')
+            if heading:
+                self.heading = heading.get('value')
+            else:
+                # eg. schedule1 -> Schedule 1
+                m = component_id.match(component)
+                if m:
+                    self.heading = ' '.join(m.groups()).capitalize()
+                else:
+                    self.heading = component.capitalize()
+        else:
+            try:
+                self.heading = _collect_string_content(node.heading)
+            except AttributeError:
+                self.heading = None
 
         try:
             num = node.num
         except AttributeError:
             num = None
 
-        self.element = node
-        self.type = node.tag.split('}', 1)[-1]
-        self.id = node.get('id')
-        self.heading = _collect_string_content(heading) if heading else None
         self.num = num.text if num else None
         self.children = children
 
+        # eg. 'main'
+        self.component = component
+        # eg. 'preamble' or 'chapter/2'
+        self.subcomponent = self.type
+        if self.num:
+            self.subcomponent += '/' + self.num.strip('.()')
+
     def as_dict(self):
-      info = {
-          'type': self.type,
-      }
-      if self.heading:
-        info['heading'] = self.heading
+        info = {
+            'type': self.type,
+            'component': self.component,
+            'subcomponent': self.subcomponent,
+        }
 
-      if self.num:
-        info['num'] = self.num
+        if self.heading:
+            info['heading'] = self.heading
 
-      if self.id:
-        info['id'] = self.id
+        if self.num:
+            info['num'] = self.num
 
-      if self.children:
-        info['children'] = [c.as_dict() for c in self.children]
+        if self.id:
+            info['id'] = self.id
 
-      return info
+        if self.children:
+            info['children'] = [c.as_dict() for c in self.children]
+
+        return info
 
 
 EMPTY_DOCUMENT = """<?xml version="1.0"?>

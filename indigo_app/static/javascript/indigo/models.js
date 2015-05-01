@@ -30,17 +30,20 @@
     },
 
     updateFragment: function(oldNode, newNode) {
-      if (!oldNode.parentNode) {
+      if (!oldNode || !oldNode.parentNode) {
         // entire document has changed
         console.log('Replacing whole document');
         this.xmlDocument = newNode;
       } else {
         // just a fragment has changed
         console.log('Replacing node');
+        newNode = oldNode.ownerDocument.importNode(newNode, true);
         oldNode.parentNode.replaceChild(newNode, oldNode);
       }
 
       this.trigger('change');
+
+      return newNode;
     },
   });
 
@@ -57,10 +60,14 @@
   });
 
   Indigo.User = Backbone.Model.extend({
-    url: '/auth/user',
+    url: '/auth/user/',
 
     authenticated: function() {
       return !!this.get('username');
+    },
+
+    isNew: function() {
+      return !this.authenticated();
     },
   });
 })(window);

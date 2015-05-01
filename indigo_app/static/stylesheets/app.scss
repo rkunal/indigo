@@ -11,8 +11,24 @@ html, body {
   min-height: 100%;
 }
 
+// the LIME editor overrides some styles by attaching .x-body to the body element,
+// so we overwrite those here
+body.x-body {
+  font-family: "Helvetica Neue",Helvetica,Arial,sans-serif;
+  font-size: 14px;
+  color: #333;
+}
+
+.form-group {
+  margin-bottom: 10px;
+}
+
 .high {
   height: 100%;
+}
+
+fieldset {
+  margin-bottom: 20px;
 }
 
 /* workspace */
@@ -31,27 +47,28 @@ html, body {
   padding: 5px;
   background-color: $header-colour;
   border-bottom: 2px solid $border-colour;
+}
 
-  .workspace-title {
-    position: absolute;
-    left: $sidebar-width;
-    right: 0px;
+.workspace-title {
+  position: absolute;
+  left: $sidebar-width;
+  right: 0px;
 
-    h4 {
-      max-width: 80%;
-    }
-  }
-
-  .buttons {
-    position: absolute;
-    top: 5px;
-    right: 15px;
-  }
-
-  .library-box {
-    position: absolute;
+  h4 {
+    max-width: 80%;
   }
 }
+
+.library-box {
+  position: absolute;
+}
+
+.workspace-buttons {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+}
+
 
 /* a page either has a workspace-content on its own,
    or a sidebar and a workspace-content */
@@ -128,6 +145,17 @@ html, body {
 .document-content-view {
   padding: 0px;
 
+  .plaintext-editor,
+  .lime-editor {
+    position: absolute;
+    top: 0px;
+    bottom: 0px;
+    left: 0px;
+    width: 100%;
+    overflow-x: hidden;
+    overflow-y: hidden;
+  }
+
   .document-sheet-container,
   .document-xml-editor {
     height: 100%;
@@ -138,21 +166,33 @@ html, body {
   .document-xml-editor {
     padding-left: 5px;
   }
+
+  #lime {
+    width: 100%;
+    height: 100%;
+  }
+}
+
+.fullscreen {
+  position: fixed;
+  top: 0px;
+  bottom: 0px;
+  left: 0px;
+  right: 0px;
 }
 
 /* misc */
 
+/* make legends a bit smaller, to match the h4 font size */
+legend {
+  font-size: 18px;
+}
+
 #error-box {
   position: fixed;
   top: 10px;
-  left: 0px;
-  right: 0px;
-  
-  .alert {
-    width: 600px;
-    margin-left: auto;
-    margin-right: auto;
-  }
+  width: 600px;
+  z-index: 9999;
 }
 
 #progress-bar {
@@ -172,6 +212,7 @@ html, body {
   height: 100%;
   overflow-x: hidden;
   overflow-y: auto;
+  position: relative;
 
   background: #aaa;
   margin: 0px;
@@ -182,6 +223,14 @@ html, body {
     padding: 30px;
     margin: 20px;
     background: white;
+    // work around a Chrome rendering bug with sections that
+    // are very short
+    min-height: 100%;
+  }
+
+  .document-sheet-buttons {
+    position: absolute;
+    right: 55px;
   }
 }
 
@@ -262,6 +311,8 @@ html, body {
   margin-top: 5px;
   border-top: 1px solid #ddd;
 
+  font-size: 13px;
+
   ol {
     list-style: none;
     padding: 5px 5px 5px 10px;
@@ -301,5 +352,24 @@ html, body {
       font-weight: bold;
       margin-top: 5px;
     }
+  }
+}
+
+.inline-editor {
+  position: absolute;
+  top: 0px;
+  left: 0px;
+
+  background-color: white;
+
+  .buttons {
+    position: absolute;
+    top: -35px;
+    right: 0px;
+  }
+
+  textarea {
+    width: 100%;
+    height: 100%;
   }
 }

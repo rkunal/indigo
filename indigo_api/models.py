@@ -1,5 +1,4 @@
 import logging
-from datetime import date
 
 from django.db import models
 import arrow
@@ -55,15 +54,6 @@ class Document(models.Model):
         if not getattr(self, '_doc', None):
             self._doc = Act(self.document_xml)
         return self._doc
-
-    @property
-    def body(self):
-        return self.doc.body_xml
-
-    @body.setter
-    def body(self, xml):
-        self.doc.body_xml = xml
-        self.refresh_xml()
 
     @property
     def content(self):

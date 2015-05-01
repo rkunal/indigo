@@ -23,50 +23,30 @@ class SimpleTest(APITestCase):
 
         # these should not be included directly, they should have URLs
         id = response.data['id']
-        assert_not_in('body', response.data)
         assert_not_in('content', response.data)
         assert_not_in('toc', response.data)
-        assert_equal(response.data['body_url'], 'http://testserver/api/documents/%s/body' % id)
         assert_equal(response.data['content_url'], 'http://testserver/api/documents/%s/content' % id)
         assert_equal(response.data['toc_url'], 'http://testserver/api/documents/%s/toc' % id)
 
-        response = self.client.get('/api/documents/%s/body' % response.data['id'])
+        response = self.client.get('/api/documents/%s/content' % response.data['id'])
         assert_equal(response.status_code, 200)
 
-        assert_equal(response.data['body'], '<body xmlns="http://www.akomantoso.org/2.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">\n  <section id="section-1">\n    <content>\n      <p/>\n    </content>\n  </section>\n</body>\n')
+        assert_in('<p/>', response.data['content'])
 
 
-    def test_update_body(self):
-        response = self.client.post('/api/documents', {'frbr_uri': '/za/act/1998/2'})
-        assert_equal(response.status_code, 201)
-        id = response.data['id']
-
-        response = self.client.patch('/api/documents/%s' % id, {'body': body_fixture('in the body')})
-        assert_equal(response.status_code, 200)
-
-        response = self.client.get('/api/documents/%s/body' % id)
-        assert_equal(response.status_code, 200)
-        assert_in('<p>in the body</p>', response.data['body'])
-
-        # also try updating the body at /body
-        response = self.client.put('/api/documents/%s/body' % id, {'body': body_fixture('also in the body')})
-        assert_equal(response.status_code, 200)
-
-        response = self.client.get('/api/documents/%s/body' % id)
-        assert_equal(response.status_code, 200)
-        assert_in('<p>also in the body</p>', response.data['body'])
-
-    def test_create_with_body(self):
+    def test_create_with_locality(self):
         response = self.client.post('/api/documents', {
-            'frbr_uri': '/za/act/1998/2',
-            'body': body_fixture('in the body'),
-            })
-        assert_equal(response.status_code, 201)
-        id = response.data['id']
+            'frbr_uri': '/za-cpt/act/1998/2',
+            'draft': False,
+        })
 
-        response = self.client.get('/api/documents/%s/body' % id)
+        assert_equal(response.status_code, 201)
+        assert_equal(response.data['frbr_uri'], '/za-cpt/act/1998/2')
+
+        response = self.client.get('/api/za-cpt/act/1998/2')
         assert_equal(response.status_code, 200)
-        assert_in('<p>in the body</p>', response.data['body'])
+        assert_equal(response.accepted_media_type, 'application/json')
+        assert_equal(response.data['frbr_uri'], '/za-cpt/act/1998/2')
 
 
     def test_create_with_locality(self):
@@ -157,18 +137,25 @@ class SimpleTest(APITestCase):
         response = self.client.get('/api/documents/%s/toc' % id)
         assert_equal(response.status_code, 200)
 
-        assert_equal(response.data['toc'], [
+        self.maxDiff = None
+        self.assertEqual(response.data['toc'], [
             {
                 'type': 'chapter',
                 'num': '2',
                 'heading': 'Administrative provisions',
                 'id': 'chapter-2',
+                'component': 'main',
+                'subcomponent': 'chapter/2',
+                'url': 'http://testserver/api/za/act/1900/1/eng/main/chapter/2',
                 'children': [
                     {
                         'type': 'section',
                         'num': '3.',
                         'heading': 'Consent required for interment',
                         'id': 'section-3',
+                        'component': 'main',
+                        'subcomponent': 'section/3',
+                        'url': 'http://testserver/api/za/act/1900/1/eng/main/section/3',
                     },
                 ],
             },

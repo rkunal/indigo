@@ -101,7 +101,6 @@ Update a Document
 * Parameters:
 
   * all the document fields described in :ref:`rest_general_guide`
-  * ``body``: an (optional) body field with the raw XML of the body of the document. ``string``
   * ``content``: an (optional) content field with the raw XML of the content of the document. ``string``
 
 Updates a document. Use `PUT` when updating all the details of a document. Use `PATCH` when updating only some fields.
@@ -111,7 +110,7 @@ will be overwritten. Most other fields of the document, such as the FRBR URI
 and the title will be re-read from the new XML, overwriting any existing
 fields. The new XML must be valid Akoma Ntoso 2.0 XML.
 
-You can also update the body of the document using ``PUT /api/documents/{id}/body`` and the content using ``PUT /api/documents/{id}/content``.
+You can also update the content of the document using ``PUT /api/documents/{id}/content``.
 
 
 Delete a Document
@@ -134,7 +133,6 @@ Create a Document
 * Parameters:
 
   * all the document fields described in :ref:`rest_general_guide`
-  * ``body``: an (optional) body field with the raw XML of the body of the document. ``string``
   * ``content``: an (optional) content field with the raw XML of the content of the document. ``string``
 
 Updates a document. Use `PUT` when updating all the details of a document. Use `PATCH` when updating only some fields.
@@ -165,22 +163,6 @@ from the new XML, overwriting any existing fields. The new XML must be valid Ako
 .. warning::
     This overwrites the entire document. Be careful.
 
-Get Document Body
------------------
-
-.. code:: http
-
-    GET /api/documents/{id}/body
-
-Fetches a JSON description of the raw XML body of a document.
-
-Update Document Body
---------------------
-
-.. code:: http
-
-    POST /api/documents/{id}/body
-
 * Parameters:
 
   * ``body``: raw XML of the document body. ``string``
@@ -196,10 +178,10 @@ Convert a Document
 
 * Parameters:
 
-  * ``outputformat``: the desired output format. One of: ``text``, ``xml``, ``html``, ``json``
+  * ``inputformat``: the format of the data in ``content``, required if ``content`` is given. One of: ``text/plain``, ``application/xml``, ``application/json``
+  * ``outputformat``: the desired output format. One of: ``application/xml``, ``text/html``, ``text/json``
   * ``file``: an HTTP file attachment (optional). If this is provided, remaining input parameters are ignored. ``file``
   * ``content``: content to convert. ``string``
-  * ``inputformat``: the format of the data in ``content``, required if ``content`` is given. One of: ``text``, ``xml``, ``json``
 
 Converts one type of content into another. This allows you to convert a PDF or Word document
 into Akoma Ntoso XML, HTML or plain text.
@@ -208,7 +190,8 @@ The content to be converted `from` must be passed in as either a file upload in 
 If you use ``content``, you must provide an ``inputformat`` parameter that describes the format of the input. If ``file`` is used, the format is
 determined by the mime type of the uploaded file.
 
-The output format depends othe ``outputformat`` parameter.
+The output data depends on the ``outputformat`` parameter. For most outputs, the response is a JSON object with a single ``output``
+property.
 
 Not all formats have all the detail necessary to convert to other formats. For instance, plain text doesn't have enough information
 to convert to a complete JSON or Akoma Ntoso XML format. In this cases, placeholder values are used (eg. for the FRBR URI, publication time, etc.).

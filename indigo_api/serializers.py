@@ -12,14 +12,8 @@ from .importer import Importer
 
 log = logging.getLogger(__name__)
 
+
 class DocumentSerializer(serializers.HyperlinkedModelSerializer):
-    body = serializers.CharField(required=False, write_only=True)
-    """ A write-only field for setting the body of the document. """
-
-    body_url = serializers.SerializerMethodField()
-    """ A read-only URL for the body of the document. The body isn't included in the
-    document description because it could be huge. """
-
     content = serializers.CharField(required=False, write_only=True)
     """ A write-only field for setting the entire XML content of the document. """
 
@@ -40,27 +34,21 @@ class DocumentSerializer(serializers.HyperlinkedModelSerializer):
     class Meta:
         model = Document
         fields = (
-                # readonly, url is part of the rest framework
-                'id', 'url',
+            # readonly, url is part of the rest framework
+            'id', 'url',
 
-                'content', 'content_url', 'file',
-                'body', 'body_url',
+            'content', 'content_url', 'file',
 
-                'title', 'draft', 'created_at', 'updated_at',
-                # frbr_uri components
-                'country', 'locality', 'nature', 'subtype', 'year', 'number', 'frbr_uri',
+            'title', 'draft', 'created_at', 'updated_at',
+            # frbr_uri components
+            'country', 'locality', 'nature', 'subtype', 'year', 'number', 'frbr_uri',
 
-                'publication_date', 'publication_name', 'publication_number',
-                'language',
+            'publication_date', 'publication_name', 'publication_number',
+            'language',
 
-                'published_url', 'toc_url',
-                )
+            'published_url', 'toc_url',
+        )
         read_only_fields = ('locality', 'nature', 'subtype', 'year', 'number', 'created_at', 'updated_at')
-
-    def get_body_url(self, doc):
-        if not doc.pk:
-            return None
-        return reverse('document-body', request=self.context['request'], kwargs={'pk': doc.pk})
 
     def get_content_url(self, doc):
         if not doc.pk:
@@ -81,7 +69,7 @@ class DocumentSerializer(serializers.HyperlinkedModelSerializer):
             uri = uri.expression_uri()[1:]
 
             return reverse('published-document-detail', request=self.context['request'],
-                    kwargs={'frbr_uri': uri})
+                           kwargs={'frbr_uri': uri})
 
     def validate(self, data):
         """
@@ -110,13 +98,14 @@ class DocumentSerializer(serializers.HyperlinkedModelSerializer):
     def validate_frbr_uri(self, value):
         try:
             return FrbrUri.parse(value).work_uri()
-        except ValueError as e:
+        except ValueError:
             raise ValidationError("Invalid FRBR URI")
 
     def update_document(self, instance):
         """ Update document without saving it. """
         for attr, value in self.validated_data.items():
             setattr(instance, attr, value)
+        instance.copy_attributes()
         return instance
 
 
@@ -127,8 +116,10 @@ class ConvertSerializer(serializers.Serializer):
 
     file = serializers.FileField(write_only=True, required=False)
     content = serializers.CharField(write_only=True, required=False)
-    inputformat = serializers.ChoiceField(write_only=True, required=False, choices=['json'])
-    outputformat = serializers.ChoiceField(write_only=True, required=True, choices=['xml', 'json', 'html'])
+    inputformat = serializers.ChoiceField(write_only=True, required=False, choices=['application/json', 'text/plain'])
+    outputformat = serializers.ChoiceField(write_only=True, required=True, choices=['application/xml', 'application/json', 'text/html'])
+    fragment = serializers.CharField(write_only=True, required=False)
+    id_prefix = serializers.CharField(write_only=True, required=False)
 
     def validate(self, data):
         if data.get('content') and not data.get('inputformat'):
