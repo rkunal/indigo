@@ -8,10 +8,17 @@
 
 {% block content %}
 
+<div class="sidebar sidebar-right">
+  <div class="boxed-group-inner">
+    <div id="filters">
+    </div>
+  </div>
+</div>
+
 <div class="workspace-content">
   <div class="boxed-group-inner">
-    <article id="library">
-    </article>
+    <div id="library">
+    </div>
   </div>
 </div>
 
@@ -44,6 +51,14 @@
               (untitled)
             {{/if}}
           </a>
+
+          {{#if stub}}
+            <span class="label label-info">stub</span>
+          {{/if}}
+
+          {{#each tags}}
+            <span class="label label-default">{{this}}</span>
+          {{/each}}
         </td>
         <td>
           {{#if draft}}
@@ -69,6 +84,47 @@
 </table>
 {% endverbatim %}
 
+</script>
+
+<script id="filters-template" type="text/x-handlebars-template">
+{% verbatim %}
+
+<div class="panel panel-default">
+  <div class="panel-heading">
+    <div class="input-group">
+      <input type="text" class="form-control filter-search" placeholder="Search documents">
+      <div class="input-group-btn">
+        <button class="filter-search-clear btn btn-default"><strong>&times;</strong></button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="panel panel-default">
+  <div class="panel-heading">
+    <h3 class="panel-title">Countries</h3>
+  </div>
+
+  <div class="list-group">
+    <a href="#" class="list-group-item filter-country active" data-country="">All countries</a>
+    {{#each summary.countries}}
+    <a href="#" class="list-group-item filter-country" data-country="{{this.code}}">{{this.name}} <span class="badge">{{this.count}}</span></a>
+    {{/each}}
+  </div>
+</div>
+
+<div class="panel panel-default">
+  <div class="panel-heading">
+    <h3 class="panel-title">Tags</h3>
+  </div>
+
+  <div class="panel-body">
+    {{#each summary.tags}}
+    <a href="#" class="label label-default filter-tag" data-tag="{{this.tag}}">{{this.tag}} <span class="badge">{{this.count}}</span></a>
+    {{/each}}
+  </div>
+</div>
+{% endverbatim %}
 </script>
 
 {% endblock %}

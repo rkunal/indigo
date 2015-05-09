@@ -2,6 +2,7 @@ import logging
 
 from django.db import models
 import arrow
+from taggit.managers import TaggableManager
 
 from cobalt.act import Act
 
@@ -39,11 +40,18 @@ class Document(models.Model):
     document_xml = models.TextField(null=True, blank=True)
     """ Raw XML content of the entire document """
 
-    publication_name = models.CharField(null=True, max_length=1024, help_text='Name of the original publication, such as a national gazette')
-    publication_number = models.CharField(null=True, max_length=1024, help_text="Publication's sequence number, such as a gazette number")
-    publication_date = models.DateField(null=True, blank=True)
+    # Date of commencement. AKN doesn't have a good spot for this, so it only goes in the DB.
+    commencement_date = models.DateField(null=True, blank=True, help_text="Date of commencement unless otherwise specified")
+    # Date of assent. AKN doesn't have a good spot for this, so it only goes in the DB.
+    assent_date = models.DateField(null=True, blank=True, help_text="Date signed by the president")
+
+    stub = models.BooleanField(default=False, help_text="This is a placeholder document without full content")
+    """ Is this a stub without full content? """
 
     deleted = models.BooleanField(default=False, help_text="Has this document been deleted?")
+
+    # freeform tags via django-taggit
+    tags = TaggableManager()
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -86,6 +94,22 @@ class Document(models.Model):
     def locality(self):
         return self.doc.frbr_uri.locality
 
+    @property
+    def publication_name(self):
+        return self.doc.publication_name
+
+    @publication_name.setter
+    def publication_name(self, value):
+        self.doc.publication_name = value
+
+    @property
+    def publication_number(self):
+        return self.doc.publication_number
+
+    @publication_number.setter
+    def publication_number(self, value):
+        self.doc.publication_number = value
+
     def save(self, *args, **kwargs):
         self.copy_attributes()
         return super(Document, self).save(*args, **kwargs)
@@ -99,21 +123,13 @@ class Document(models.Model):
             self.doc.frbr_uri = self.frbr_uri
             self.doc.language = self.language
 
-            self.doc.work_date = self.publication_date
+            self.doc.work_date = self.doc.publication_date
             self.doc.manifestation_date = self.updated_at or arrow.now()
-
-            self.doc.publication_date = self.publication_date or ''
-            self.doc.publication_name = self.publication_name or ''
-            self.doc.publication_number = self.publication_number or ''
 
         else:
             self.title = self.doc.title
             self.language = self.doc.language
             self.frbr_uri = self.doc.frbr_uri.work_uri()
-
-            self.publication_date = self.doc.publication_date or self.doc.work_date
-            self.publication_name = self.doc.publication_name
-            self.publication_number = self.doc.publication_number
 
         # update the model's XML from the Act XML
         self.refresh_xml()

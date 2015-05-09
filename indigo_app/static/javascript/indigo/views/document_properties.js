@@ -4,6 +4,15 @@
   if (!exports.Indigo) exports.Indigo = {};
   Indigo = exports.Indigo;
 
+  // django doesn't link blank date fields, send null instead
+  function emptyIsNull(val) {
+    return (!val || val.trim() === "") ? null : val;
+  }
+
+  function bool(val) {
+    return val == "1";
+  }
+
   // Handle the document properties form, and saving them back to the server.
   Indigo.DocumentPropertiesView = Backbone.View.extend({
     el: '.document-properties-view',
@@ -15,16 +24,47 @@
       '#document_year': 'year',
       '#document_number': 'number',
       '#document_frbr_uri': 'frbr_uri',
-
       '#document_title': 'title',
-      '#document_publication_date': 'publication_date',
+      '#document_tags': {
+        observe: 'tags',
+        initialize: function($el, model, options) {
+          $el.select2();
+        },
+        getVal: function($el, event, options) {
+          return $el.val() || [];
+        },
+        update: function($el, val, model, options) {
+          val = val || [];
+          if ($el.data('select2')) {
+            // update the valid choices to ensure those we want are there
+            $el.select2({data: val});
+            // add them
+            $el.val(val).trigger('change');
+          }
+        },
+      },
+      '#document_publication_date': {
+        observe: 'publication_date',
+        onSet: emptyIsNull,
+      },
       '#document_publication_name': 'publication_name',
       '#document_publication_number': 'publication_number',
+      '#document_commencement_date': {
+        observe: 'commencement_date',
+        onSet: emptyIsNull,
+      },
+      '#document_assent_date': {
+        observe: 'assent_date',
+        onSet: emptyIsNull,
+      },
       '#document_language': 'language',
       '#document_draft': {
         observe: 'draft',
-        // API requires this value to be true or false
-        onSet: function(val) { return val == "1"; }
+        onSet: bool,
+      },
+      '#document_stub': {
+        observe: 'stub',
+        onSet: bool,
       },
       '#document_updated_at': {
         observe: 'updated_at',
