@@ -17,7 +17,7 @@
 
     initialize: function() {
       this.stickit();
-      this.model.on('change:title', this.setWindowTitle);
+      this.model.on('change:title sync', this.setWindowTitle);
     },
 
     setWindowTitle: function() {
@@ -48,6 +48,8 @@
   //   DocumentPropertiesView - handles editing the document metadata, such as
   //                            publication dates and URIs
   //
+  //   DocumentAmendmentsView - handles editing document amendment metadata
+  //
   //   DocumentEditorView - handles editing the document's body content
   //
   // When saving a document, the DocumentView tells the children to save their changes.
@@ -63,6 +65,7 @@
       'click .btn.delete-document': 'delete',
       'hidden.bs.tab a[href="#content-tab"]': 'tocDeselected',
       'shown.bs.tab a[href="#preview-tab"]': 'renderPreview',
+      'click .btn.clone': 'createClone',
     },
 
     initialize: function() {
@@ -71,16 +74,11 @@
 
       this.$saveBtn = $('.workspace-buttons .btn.save');
 
-      var info = document_id ? {id: document_id} : {
-        id: null,
-        title: '(untitled)',
-        publication_date: moment().format('YYYY-MM-DD'),
-        nature: 'act',
-        country: 'za',
-        number: '1',
-      };
+      // The document page eager loads the document details into this
+      // variable.
+      var info = Indigo.documentPreload;
 
-      this.document = new Indigo.Document(info, {collection: library});
+      this.document = new Indigo.Document(info, {collection: library, parse: true});
       this.document.on('change', this.setDirty, this);
       this.document.on('change', this.allowDelete, this);
 
@@ -100,6 +98,8 @@
       this.propertiesView.on('dirty', this.setDirty, this);
       this.propertiesView.on('clean', this.setClean, this);
 
+      this.amendmentsView = new Indigo.DocumentAmendmentsView({model: this.document});
+
       this.tocView = new Indigo.DocumentTOCView({model: this.documentDom});
       this.tocView.on('item-selected', this.showEditor, this);
 
@@ -115,13 +115,13 @@
       // prevent the user from navigating away without saving changes
       $(window).on('beforeunload', _.bind(this.windowUnloading, this));
 
+      // pretend we've fetched it, this sets up additional handlers
+      this.document.trigger('sync');
+
       if (document_id) {
-        // fetch it
-        this.document.fetch();
+        // fetch content
         this.documentContent.fetch();
       } else {
-        // pretend we've fetched it, this sets up additional handlers
-        this.document.trigger('sync');
         this.documentContent.trigger('sync');
         this.propertiesView.calculateUri();
         this.setDirty();
@@ -171,7 +171,8 @@
     },
 
     allowDelete: function() {
-      this.$el.find('.btn.delete-document').prop('disabled', this.document.isNew() || !this.user.authenticated());
+      this.$el.find('.btn.delete-document').prop('disabled',
+        this.document.isNew() || !this.user.authenticated() || !this.document.get('draft'));
     },
 
     userChanged: function() {
@@ -235,7 +236,7 @@
           contentType: "application/json; charset=utf-8",
           dataType: "json"})
           .then(function(response) {
-            $('#preview-tab .an-container').html(response.output);
+            $('#preview-tab .akoma-ntoso').html(response.output);
             self.previewDirty = false;
           });
       }
@@ -251,6 +252,39 @@
           .destroy()
           .then(function() {
             document.location = '/library';
+          });
+      }
+    },
+
+    // Create a clone of the document and redirect them there
+    createClone: function(e) {
+      if (confirm('Create a copy of this document? Unsaved changes will be lost!')) {
+        // clone and reset some attributes
+        var clone = this.document.clone();
+        clone.set({
+          content: this.documentContent.get('content'),
+          draft: true,
+          title: 'Copy of ' + clone.get('title'),
+          id: null,
+        });
+
+        var $btn = $(e.target);
+        $btn
+          .toggleClass('disabled')
+          .find('.fa')
+          .toggleClass('fa-copy fa-pulse fa-spinner');
+
+        clone
+          .save(null, {parse: false})
+          .done(function(response) {
+            // redirect
+            document.location = '/documents/' + response.id + '/';
+          })
+          .fail(function() {
+            $btn
+              .toggleClass('disabled')
+              .find('.fa')
+              .toggleClass('fa-copy fa-pulse fa-spinner');
           });
       }
     }

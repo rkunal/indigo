@@ -164,49 +164,93 @@ a.help {
   padding: 10px;
 }
 
+.document-content-header {
+  /* shown only when the text editor is active */
+  .text-editor-buttons {
+    display: none;
+    padding-right: 5px;
+  }
+
+  &.show-text-editor {
+    .text-editor-buttons {
+      display: block;
+    }
+  }
+}
+
+.sheet-editor,
+.lime-editor {
+  position: absolute;
+  top: 0px;
+  bottom: 0px;
+  left: 0px;
+  width: 100%;
+  overflow-x: hidden;
+  overflow-y: hidden;
+}
+
+.ace-editor,
+#lime {
+  width: 100%;
+  height: 100%;
+}
+
+.document-sheet-container {
+  height: 100%;
+  width: 100%;
+}
+
+.document-xml-editor {
+  /* this is changed when the user chooses to show it */
+  display: none;
+  position: absolute;
+  padding-left: 5px;
+  top: 0px;
+  bottom: 0px;
+  right: 0px;
+  left: 50%;
+}
+
 .document-content-view {
   padding: 0px;
 
-  .plaintext-editor,
-  .lime-editor {
-    position: absolute;
-    top: 0px;
-    bottom: 0px;
-    left: 0px;
-    width: 100%;
-    overflow-x: hidden;
-    overflow-y: hidden;
-  }
-
-  .document-xml-editor {
-    /* this is changed when the user chooses to show it */
-    display: none;
-    padding-left: 5px;
-    height: 100%;
-    width: 50%;
-    float: left;
-  }
-
-  .document-sheet-container {
-    height: 100%;
-    width: 100%;
-    float: left;
-  }
-
-  #lime {
-    width: 100%;
-    height: 100%;
-  }
-
   // show or hide source code component
-  &.show-code {
+  &.show-source {
     .document-xml-editor {
       display: block;
     }
 
-    .document-sheet-container {
+    .document-sheet-container,
+    .text-editor {
       width: 50%;
     }
+  }
+
+  // show or hide plaintext editor component
+  &.show-text-editor {
+    .document-sheet-container {
+      display: none;
+    }
+
+    .text-editor {
+      display: block;
+    }
+  }
+}
+
+.text-editor {
+  // changed when the user chooses to view it
+  display: none;
+
+  position: absolute;
+  top: 0px;
+  bottom: 0px;
+  left: 0px;
+  width: 100%;
+
+  textarea {
+    width: 100%;
+    height: 100%;
   }
 }
 
@@ -264,16 +308,11 @@ legend {
     // are very short
     min-height: 100%;
   }
-
-  .document-sheet-buttons {
-    position: absolute;
-    right: 55px;
-  }
 }
 
 
 /* akoma ntoso styles */
-.an-container {
+.akoma-ntoso {
   text-align: justify;
   line-height: 1.5em;
 
@@ -338,7 +377,7 @@ legend {
 /* table of contents browser */
 .toc {
   position: absolute;
-  top: 90px;
+  top: 130px;
   left: 0px;
   right: 0px;
   bottom: 0px;
@@ -378,36 +417,18 @@ legend {
   }
 
   .toc-item {
-    &.an-akomaNtoso,
-    &.an-coverpage,
-    &.an-preface,
-    &.an-preamble,
-    &.an-chapter,
-    &.an-part,
-    &.an-conclusions,
-    &.an-doc {
+    &.akn-akomaNtoso,
+    &.akn-coverpage,
+    &.akn-preface,
+    &.akn-preamble,
+    &.akn-chapter,
+    &.akn-part,
+    &.akn-conclusions,
+    &.akn-doc {
       font-weight: bold;
+      margin-bottom: 5px;
       margin-top: 5px;
     }
-  }
-}
-
-.inline-editor {
-  position: absolute;
-  top: 0px;
-  left: 0px;
-
-  background-color: white;
-
-  .buttons {
-    position: absolute;
-    top: -35px;
-    right: 0px;
-  }
-
-  textarea {
-    width: 100%;
-    height: 100%;
   }
 }
 
@@ -417,4 +438,28 @@ legend {
   font-size: inherit;
   font-weight: normal;
   margin-bottom: 5px;
+}
+
+/* amendments list */
+.amendments-list {
+  .buttons {
+    width: 1%;
+    white-space: nowrap;
+  }
+
+  .date {
+    width: 10%;
+    white-space: nowrap;
+  }
+}
+
+#amendment-box {
+  .nav {
+    margin-bottom: 5px;
+  }
+
+  .document-chooser-list {
+    max-height: 295px;
+    overflow-y: scroll;
+  }
 }

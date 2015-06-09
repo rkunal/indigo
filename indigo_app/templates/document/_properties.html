@@ -1,6 +1,6 @@
 <header class="boxed-group-header">
   <h4>
-    Document properties
+    Document metadata
     <a class="help" href="http://indigo.readthedocs.org/en/latest/guide/editing.html" target="_blank" title="Read the docs"><i class="fa fa-question-circle"></i></a>
   </h4>
 </header>
@@ -21,8 +21,8 @@
         <label for="document_country" class="col-sm-2 control-label">Country</label>
         <div class="col-sm-4">
           <select id="document_country" class="form-control">
-            {% for code, name in form.fields.country.choices %}
-            <option value="{{ code }}">{{ name }}</option>
+            {% for opt in countries %}
+            <option value="{{ opt.country.iso.lower }}">{{ opt.country.name }}</option>
             {% endfor %}
           </select>
         </div>
@@ -37,15 +37,20 @@
         <label for="document_language" class="col-sm-2 control-label">Language</label>
         <div class="col-sm-4">
           <select id="document_language" class="form-control">
-            {% for code, name in form.fields.language.choices %}
-            <option value="{{ code }}">{{ name }}</option>
+            {% for opt in languages %}
+            <option value="{{ opt.language.iso_639_2B }}">{{ opt.language.name_en }}</option>
             {% endfor %}
           </select>
         </div>
 
         <label for="document_subtype" class="col-sm-2 control-label">Document subtype</label>
         <div class="col-sm-4">
-          <input type="text" class="form-control" id="document_subtype" placeholder="Subtype (optional)">
+          <select id="document_subtype" class="form-control">
+            <option value="">(none)</option>
+            {% for subtype in subtypes %}
+            <option value="{{ subtype.abbreviation }}">{{ subtype }}</option>
+            {% endfor %}
+          </select>
         </div>
       </div>
 
@@ -100,7 +105,7 @@
     </fieldset>
 
     <fieldset>
-      <legend>Important Dates</legend>
+      <legend>Promulgation</legend>
 
       <div class="form-group">
         <label for="document_publication_date" class="col-sm-2 control-label">Publication date</label>
@@ -165,6 +170,7 @@
       <legend>Danger Zone</legend>
 
       <button class="btn btn-danger delete-document" disabled>Delete this document</button>
+      <p class="help-block">Only draft documents can be deleted.</p>
     </fieldset>
 
   </div>

@@ -16,13 +16,23 @@ $(function() {
   // global error handler
   $(document)
     .ajaxError(function(event, xhr, settings, error) {
+      var msg = xhr.statusText;
+      if (xhr.responseJSON && xhr.responseJSON.detail) {
+        msg = xhr.responseJSON.detail;
+      }
+
       // 500-level status code?
       if (Math.trunc(xhr.status/100) == 5) {
         Indigo.errorView.show("Whoops, something went wrong. " + xhr.statusText);
+
+      } else if (xhr.status == 405) {
+        // method not allowed
+        Indigo.errorView.show(msg);
+
       } else if (xhr.status == 403) {
         // permission denied
         if (Indigo.userView.model.authenticated()) {
-          Indigo.errorView.show("You aren't allowed to do that. Try logging out and in again.");
+          Indigo.errorView.show("You aren't allowed to do that.");
         } else {
           Indigo.errorView.show("Please log in first.");
         }

@@ -14,6 +14,14 @@
     <xsl:apply-templates select="a:conclusions" />
   </xsl:template>
 
+  <xsl:template match="a:preface">
+    <xsl:text>PREFACE</xsl:text>
+    <xsl:text>
+
+</xsl:text>
+    <xsl:apply-templates />
+  </xsl:template>
+
   <xsl:template match="a:preamble">
     <xsl:text>PREAMBLE</xsl:text>
     <xsl:text>
@@ -127,6 +135,8 @@
       <xsl:value-of select="." />
       <xsl:text>" </xsl:text>
     </xsl:for-each>
+    <xsl:text>
+|-</xsl:text>
 
     <xsl:apply-templates />
     <xsl:text>
@@ -173,6 +183,12 @@
   </xsl:template>
 
   <!-- END tables -->
+
+  <xsl:template match="a:remark">
+    <xsl:text>[</xsl:text>
+    <xsl:apply-templates />
+    <xsl:text>]</xsl:text>
+  </xsl:template>
 
 
   <!-- for most nodes, just dump their text content -->

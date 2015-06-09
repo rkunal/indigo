@@ -1,4 +1,5 @@
 import logging
+from itertools import groupby
 
 from django.db import models
 import arrow
@@ -6,39 +7,33 @@ from taggit.managers import TaggableManager
 
 from cobalt.act import Act
 
-COUNTRIES = sorted([
-    ('za', 'South Africa'),
-    ('zm', 'Zambia'),
-    ])
-
-# 3-letter ISO-639-2 language codes, see http://en.wikipedia.org/wiki/List_of_ISO_639-2_codes
-LANGUAGES = sorted([
-    ('eng', 'English'),
-    ('fre', 'French'),
-    ('swa', 'Swahili'),
-    ('afr', 'Afrikaans'),
-    ('por', 'Portuguese'),
-    ])
 DEFAULT_LANGUAGE = 'eng'
+DEFAULT_COUNTRY = 'za'
 
 log = logging.getLogger(__name__)
+
 
 class Document(models.Model):
     db_table = 'documents'
 
-    frbr_uri = models.CharField(max_length=512, null=False, blank=False, default='/', help_text="Used globably to identify this work")
+    frbr_uri = models.CharField(max_length=512, null=False, blank=False, default='/', help_text="Used globally to identify this work")
     """ The FRBR Work URI of this document that uniquely identifies it globally """
 
     title = models.CharField(max_length=1024, null=True, default='(untitled)')
-    country = models.CharField(max_length=2, choices=COUNTRIES, default=COUNTRIES[0][0])
+    country = models.CharField(max_length=2, default=DEFAULT_COUNTRY)
 
     """ The 3-letter ISO-639-2 language code of this document """
-    language = models.CharField(max_length=3, choices=LANGUAGES, default=DEFAULT_LANGUAGE)
+    language = models.CharField(max_length=3, default=DEFAULT_LANGUAGE)
     draft = models.BooleanField(default=True, help_text="Drafts aren't available through the public API")
     """ Is this a draft? """
 
     document_xml = models.TextField(null=True, blank=True)
     """ Raw XML content of the entire document """
+
+    # Date from the FRBRExpression element. This is either the publication date or the date of the last
+    # amendment. This is used to identify this particular version of this work, so is stored in the DB.
+    # It can be null only so that users aren't forced to add a value.
+    expression_date = models.DateField(null=True, blank=True, help_text="Date of publication or latest amendment")
 
     # Date of commencement. AKN doesn't have a good spot for this, so it only goes in the DB.
     commencement_date = models.DateField(null=True, blank=True, help_text="Date of commencement unless otherwise specified")
@@ -110,6 +105,28 @@ class Document(models.Model):
     def publication_number(self, value):
         self.doc.publication_number = value
 
+    @property
+    def publication_date(self):
+        return self.doc.publication_date
+
+    @publication_date.setter
+    def publication_date(self, value):
+        self.doc.publication_date = value
+
+    @property
+    def amendments(self):
+        # we cache these values so that we can decorate them
+        # with extra info when serializing
+        if not hasattr(self, '_amendments') or self._amendments is None:
+            self._amendments = self.doc.amendments
+        return self._amendments
+
+    @amendments.setter
+    def amendments(self, value):
+        self._amendments = None
+        self._amended_versions = None
+        self.doc.amendments = value
+
     def save(self, *args, **kwargs):
         self.copy_attributes()
         return super(Document, self).save(*args, **kwargs)
@@ -124,12 +141,17 @@ class Document(models.Model):
             self.doc.language = self.language
 
             self.doc.work_date = self.doc.publication_date
+            self.doc.expression_date = self.expression_date or self.doc.publication_date or arrow.now()
             self.doc.manifestation_date = self.updated_at or arrow.now()
 
         else:
             self.title = self.doc.title
             self.language = self.doc.language
             self.frbr_uri = self.doc.frbr_uri.work_uri()
+            self.expression_date = self.doc.expression_date
+            # ensure these are refreshed
+            self._amendments = None
+            self._amended_versions = None
 
         # update the model's XML from the Act XML
         self.refresh_xml()
@@ -153,5 +175,80 @@ class Document(models.Model):
     def table_of_contents(self):
         return [t.as_dict() for t in self.doc.table_of_contents()]
 
+    def amended_versions(self):
+        """ Return a list of all the amended versions of this work.
+        This is all documents that share the same URI but have different
+        expression dates.
+
+        If there are no document besides this one, an empty list is returned.
+        """
+        if not hasattr(self, '_amended_versions'):
+            Documents.decorate_amended_versions([self])
+
+        return self._amended_versions
+
     def __unicode__(self):
         return 'Document<%s, %s>' % (self.id, (self.title or '(Untitled)')[0:50])
+
+    @classmethod
+    def decorate_amendments(cls, documents):
+        """ Decorate the items in each document's ``amendments``
+        list with the document id of the amending document.
+        """
+        # uris that amended docs in the set
+        uris = set(a.amending_uri for d in documents for a in d.amendments if a.amending_uri)
+        amending_docs = Document.objects\
+                .filter(deleted__exact=False)\
+                .filter(frbr_uri__in=list(uris))\
+                .defer('document_xml')\
+                .order_by('expression_date')\
+                .all()
+
+        for doc in documents:
+            for a in doc.amendments:
+                for amending in amending_docs:
+                    # match on the URI and the expression date
+                    if amending.frbr_uri == a.amending_uri and amending.expression_date == a.date:
+                        a.amending_document = amending
+                        break
+
+    @classmethod
+    def decorate_amended_versions(cls, documents):
+        """ Decorate each documents with ``_amended_versions``, a (possibly empty)
+        list of all the documents which form the same group of amended versions.
+        """
+        uris = [d.frbr_uri for d in documents]
+        docs = Document.objects\
+                .filter(deleted__exact=False)\
+                .filter(frbr_uri__in=uris)\
+                .defer('document_xml')\
+                .order_by('frbr_uri', 'expression_date').all() 
+
+        # group by URI
+        groups = {}
+        for uri, group in groupby(docs, lambda d: d.frbr_uri):
+            groups[uri] = list(group)
+
+        for doc in documents:
+            amended_versions = groups.get(doc.frbr_uri, [])
+
+            # there are no amended versions if this is the only one
+            if len(amended_versions) == 0 or (len(amended_versions) == 1 and amended_versions[0].id == doc.id):
+                doc._amended_versions = []
+            else:
+                doc._amended_versions = amended_versions
+
+
+class Subtype(models.Model):
+    name = models.CharField(max_length=1024, help_text="Name of the document subtype")
+    abbreviation = models.CharField(max_length=20, help_text="Short abbreviation to use in FRBR URI. No punctuation.", unique=True)
+
+    class Meta:
+        verbose_name = 'Document subtype'
+
+    def clean(self):
+        if self.abbreviation:
+            self.abbreviation = self.abbreviation.lower()
+
+    def __unicode__(self):
+        return '%s (%s)' % (self.name, self.abbreviation)

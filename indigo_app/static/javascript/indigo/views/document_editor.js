@@ -4,19 +4,19 @@
   if (!exports.Indigo) exports.Indigo = {};
   Indigo = exports.Indigo;
 
-  // The AceEditorController manages the interaction between
-  // the ace-based editor, the model, and the document editor view.
+  // The SourceEditorController manages the interaction between
+  // the ace-based source (xml) editor, the model, and the document editor view.
   //
   // It also handles the in-place text-based editor.
-  Indigo.AceEditorController = function(options) {
+  Indigo.SourceEditorController = function(options) {
     this.initialize.apply(this, arguments);
   };
-  _.extend(Indigo.AceEditorController.prototype, Backbone.Events, {
+  _.extend(Indigo.SourceEditorController.prototype, Backbone.Events, {
     initialize: function(options) {
       var self = this;
 
       this.view = options.view;
-      this.name = 'ace';
+      this.name = 'source';
 
       this.editor = ace.edit(this.view.$el.find(".ace-editor")[0]);
       this.editor.setTheme("ace/theme/monokai");
@@ -33,13 +33,11 @@
           self.htmlTransform = htmlTransform;
         });
 
-      // setup inline sheet editor
-      this.$inlineEditor = this.view.$el.find('#inline-editor');
-      this.$inlineEditor.find('.btn.save').on('click', _.bind(this.saveInlineEditor, this));
-      this.$inlineEditor.find('.btn.cancel').on('click', _.bind(this.closeInlineEditor, this));
-
-      this.$inlineButtons = this.view.$el.find('.document-sheet-buttons');
-      this.$inlineButtons.find('.edit').on('click', _.bind(this.editInline, this));
+      // setup sheet text editor
+      this.$textEditor = this.view.$el.find('#text-editor');
+      this.view.$el.find('.text-editor-buttons .btn.save').on('click', _.bind(this.saveTextEditor, this));
+      this.view.$el.find('.text-editor-buttons .btn.cancel').on('click', _.bind(this.closeTextEditor, this));
+      this.view.$el.find('.btn.edit-text').on('click', _.bind(this.editText, this));
 
       var textTransform = new XSLTProcessor();
       $.get('/static/xsl/act_text.xsl')
@@ -49,28 +47,29 @@
         });
     },
 
-    editInline: function(e) {
+    editText: function(e) {
       e.preventDefault();
 
+      // disable the edit button
+      this.view.$el.find('.btn.edit-text').prop('disabled', true);
+
+      // ensure source code is hidden
+      this.view.$el.find('.btn.show-source.active').click();
+
       var self = this;
-      var $editable = this.view.$el.find('.an-container').children().first();
-
+      var $editable = this.view.$el.find('.akoma-ntoso').children().first();
       // text from node in the actual XML document
-      var text = this.textTransform
-        .transformToFragment(this.view.fragment, document)
-        .firstChild.textContent
-        // cleanup inline whitespace
-        .replace(/([^ ]) +/g, '$1 ')
-        // remove multiple consecutive blank lines
-        .replace(/^( *\n){2,}/gm, "\n");
+      var text = this.xmlToText(this.view.fragment);
 
-      // show the inline editor
-      $editable.css({position: 'relative'});
-      this.$inlineEditor
+      // show the text editor
+      this.view.$el
+        .find('.document-content-view, .document-content-header')
+        .addClass('show-text-editor')
+        .find('.toggle-editor-buttons .btn')
+        .prop('disabled', true);
+
+      this.$textEditor
         .data('fragment', this.view.fragment.tagName)
-        .height($editable.height())
-        .width($editable.width())
-        .appendTo($editable)
         .show()
         .find('textarea')
           .val(text)
@@ -79,20 +78,29 @@
           .scrollTop(0);
 
       this.view.$el.find('.document-sheet-container').scrollTop(0);
-      this.$inlineButtons.hide();
     },
 
-    saveInlineEditor: function(e) {
+    xmlToText: function(element) {
+      return this.textTransform
+        .transformToFragment(element, document)
+        .firstChild.textContent
+        // cleanup inline whitespace
+        .replace(/([^ ]) +/g, '$1 ')
+        // remove multiple consecutive blank lines
+        .replace(/^( *\n){2,}/gm, "\n");
+    },
+
+    saveTextEditor: function(e) {
       var self = this;
-      var $editable = this.view.$el.find('.an-container').children().first();
-      var $btn = this.$inlineEditor.find('.btn.save');
-      var fragment = this.$inlineEditor.data('fragment');
+      var $editable = this.view.$el.find('.akoma-ntoso').children().first();
+      var $btn = this.view.$el.find('.text-editor-buttons .btn.save');
+      var fragment = this.$textEditor.data('fragment');
 
       var data = JSON.stringify({
         'inputformat': 'text/plain',
         'outputformat': 'application/xml',
         'fragment': fragment,
-        'content': this.$inlineEditor.find('textarea').val(),
+        'content': this.$textEditor.find('textarea').val(),
       });
 
       $btn
@@ -101,12 +109,11 @@
           .removeClass('fa-check')
           .addClass('fa-spinner fa-pulse');
 
-      $.ajax({
-        url: '/api/convert',
-        type: "POST",
-        data: data,
-        contentType: "application/json; charset=utf-8",
-        dataType: "json"})
+      // The actual response to update the view is done
+      // in a deferred so that we can cancel it if the
+      // user clicks 'cancel'
+      var deferred = this.pendingTextSave = $.Deferred();
+      deferred
         .then(function(response) {
           // find either the fragment we asked for, or the first element below the akomaNtoso
           // parent element
@@ -114,36 +121,59 @@
           newFragment = newFragment.querySelector(fragment) || newFragment.documentElement.firstElementChild;
 
           self.view.updateFragment(self.view.fragment, newFragment);
-          self.closeInlineEditor();
+          self.closeTextEditor();
           self.render();
           self.setEditorValue(self.view.xmlModel.toXml(newFragment));
         })
         .fail(function(xhr, status, error) {
-          if (xhr.status == 400) {
-            Indigo.errorView.show(xhr.responseJSON.content || error || status);
-          } else {
-            Indigo.errorView.show(error || status);
+          // this will be null if we've been cancelled without an ajax response
+          if (xhr) {
+            if (xhr.status == 400) {
+              Indigo.errorView.show(xhr.responseJSON.content || error || status);
+            } else {
+              Indigo.errorView.show(error || status);
+            }
           }
         })
-        .always(function(response) {
+        .always(function() {
+          // TODO: this doesn't feel like it's in the right place;
           $btn
             .attr('disabled', false)
             .find('.fa')
               .removeClass('fa-spinner fa-pulse')
               .addClass('fa-check');
         });
+
+      $.ajax({
+        url: '/api/convert',
+        type: "POST",
+        data: data,
+        contentType: "application/json; charset=utf-8",
+        dataType: "json"})
+        .done(function(response) {
+          deferred.resolve(response);
+        })
+        .fail(function(xhr, status, error) {
+          deferred.reject(xhr, status, error);
+        });
     },
 
-    closeInlineEditor: function(e) {
-      this.$inlineEditor.hide();
-      this.view.$el.find('.document-sheet-container').after(this.$inlineEditor);
-
-      this.$inlineButtons.show();
+    closeTextEditor: function(e) {
+      if (this.pendingTextSave) {
+        this.pendingTextSave.reject();
+        this.pendingTextSave = null;
+      }
+      this.view.$el
+        .find('.document-content-view, .document-content-header')
+        .removeClass('show-text-editor')
+        .find('.toggle-editor-buttons .btn')
+        .prop('disabled', false)
+        .removeClass('active');
     },
 
     editFragment: function(node) {
       // edit node, a node in the XML document
-      this.closeInlineEditor();
+      this.closeTextEditor();
       this.render();
       this.view.$el.find('.document-sheet-container').scrollTop(0);
 
@@ -168,7 +198,7 @@
 
     // Save the content of the XML editor into the DOM, returns a Deferred
     saveChanges: function() {
-      this.closeInlineEditor();
+      this.closeTextEditor();
 
       if (this.dirty) {
         // update the fragment content from the editor's version
@@ -188,7 +218,7 @@
     render: function() {
       if (this.htmlTransform && this.view.fragment) {
         var html = this.htmlTransform.transformToFragment(this.view.fragment, document);
-        this.view.$el.find('.an-container').html('').get(0).appendChild(html);
+        this.view.$el.find('.akoma-ntoso').html('').get(0).appendChild(html);
       }
     },
 
@@ -306,10 +336,9 @@
   Indigo.DocumentEditorView = Backbone.View.extend({
     el: '#content-tab',
     events: {
-      'change [value=plaintext]': 'editWithAce',
-      'change [value=lime]': 'editWithLime',
+      'click .btn.edit-lime': 'toggleLime',
       'click .btn.show-fullscreen': 'toggleFullscreen',
-      'click .btn.show-code': 'toggleShowCode',
+      'click .btn.show-source': 'toggleShowCode',
     },
 
     initialize: function(options) {
@@ -329,10 +358,10 @@
       this.tocView.on('item-selected', this.editTocItem, this);
 
       // setup the editor controllers
-      this.aceEditor = new Indigo.AceEditorController({view: this});
+      this.sourceEditor = new Indigo.SourceEditorController({view: this});
       this.limeEditor = new Indigo.LimeEditorController({view: this});
 
-      this.editWithAce();
+      this.showSheet();
     },
 
     editTocItem: function(item) {
@@ -371,8 +400,8 @@
     },
 
     toggleShowCode: function(e) {
-      if (this.activeEditor.name == 'ace') {
-        this.$el.find('.document-content-view').toggleClass('show-code');
+      if (this.activeEditor.name == 'source') {
+        this.$el.find('.document-content-view').toggleClass('show-source');
       }
     },
 
@@ -385,27 +414,38 @@
       }
     },
 
-    editWithAce: function(e) {
+    showSheet: function() {
       var self = this;
 
       this.stopEditing()
         .then(function() {
-          self.$el.find('.plaintext-editor').addClass('in');
+          self.$el.find('.sheet-editor').addClass('in');
           self.$el.find('.lime-editor').removeClass('in');
-          self.$el.find('.btn.show-code').prop('disabled', false);
-          self.activeEditor = self.aceEditor;
+          self.$el.find('.btn.show-source, .btn.edit-text').prop('disabled', false);
+          self.$el.find('.btn.edit-text').toggleClass('btn-warning btn-default');
+          self.$el.find('.btn.edit-lime').toggleClass('btn-warning btn-default active');
+          self.activeEditor = self.sourceEditor;
           self.editFragment(self.fragment);
         });
     },
 
-    editWithLime: function(e) {
+    toggleLime: function(e) {
+      if (this.activeEditor === this.limeEditor) {
+        // stop editing in lime
+        e.preventDefault();
+        this.showSheet(e);
+        return;
+      }
+
       var self = this;
 
       this.stopEditing()
         .then(function() {
-          self.$el.find('.plaintext-editor').removeClass('in');
+          self.$el.find('.sheet-editor').removeClass('in');
           self.$el.find('.lime-editor').addClass('in');
-          self.$el.find('.btn.show-code').prop('disabled', true);
+          self.$el.find('.btn.show-source, .btn.edit-text').prop('disabled', true);
+          self.$el.find('.btn.edit-text').toggleClass('btn-warning btn-default');
+          self.$el.find('.btn.edit-lime').toggleClass('btn-warning btn-default active');
           self.activeEditor = self.limeEditor;
           self.editFragment(self.fragment);
         });

@@ -7,6 +7,10 @@
     {% include "document/_properties.html" %}
   </div>
 
+  <div id="amendments-tab" class="tab-pane high">
+    {% include "document/_amendments.html" %}
+  </div>
+
   <div id="content-tab" class="tab-pane high">
     {% include "document/_content.html" %}
   </div>
@@ -15,5 +19,16 @@
     {% include "document/_preview.html" %}
   </div>
 </div>
+
+{% endblock %}
+
+{% block js %}
+{{ block.super }}
+
+{# include the document as JSON #}
+<script type="text/javascript">
+if (!window.Indigo) window.Indigo = {};
+window.Indigo.documentPreload = {{ document_json|safe }};
+</script>
 
 {% endblock %}

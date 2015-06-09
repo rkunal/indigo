@@ -54,6 +54,8 @@ INSTALLED_APPS = (
     # the Indigo API
     'taggit',
     'taggit_serializer',
+    'countries_plus',
+    'languages_plus',
     'indigo_api',
 
     # the Indigo browser application
@@ -170,7 +172,8 @@ REST_FRAMEWORK = {
     'DEFAULT_PERMISSION_CLASSES': [
         'rest_framework.permissions.IsAuthenticatedOrReadOnly',
         'rest_framework.permissions.AllowAny',
-    ]
+    ],
+    'TEST_REQUEST_DEFAULT_FORMAT': 'json',
 }
 
 SUPPORT_EMAIL = 'mariyab@africanlii.org'
@@ -212,7 +215,7 @@ LOGGING = {
             'level': 'DEBUG' if DEBUG else 'INFO',
         },
         'django': {
-            'level': 'INFO',
+            'level': 'DEBUG' if DEBUG else 'INFO',
         }
     }
 }

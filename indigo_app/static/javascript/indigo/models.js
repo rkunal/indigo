@@ -52,6 +52,34 @@
       draft: true,
       title: '(none)',
     },
+
+    urlRoot: '/api/documents',
+
+    parse: function(json) {
+      json.amendments = this.reifyAmendments(json.amendments);
+      return json;
+    },
+
+    reifyAmendments: function(amendments) {
+      // turn amendments into an AmendmentList
+      if (amendments) {
+        amendments = _.map(amendments, function(a) { return new Indigo.Amendment(a); });
+      } else {
+        amendments = [];
+      }
+      return new Indigo.AmendmentList(amendments);
+    },
+
+    toJSON: function() {
+      var json = Backbone.Model.prototype.toJSON.apply(this, arguments);
+      var amendments = this.get('amendments');
+
+      if (amendments && amendments.toJSON) {
+        json.amendments = amendments.toJSON();
+      }
+
+      return json;
+    },
   });
 
   Indigo.Library = Backbone.Collection.extend({
@@ -70,4 +98,12 @@
       return !this.authenticated();
     },
   });
+
+  Indigo.Amendment = Backbone.Model.extend({});
+
+  Indigo.AmendmentList = Backbone.Collection.extend({
+    model: Indigo.Amendment,
+    comparator: 'date',
+  });
+
 })(window);

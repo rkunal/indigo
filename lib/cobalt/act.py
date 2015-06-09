@@ -14,6 +14,13 @@ component_id = re.compile('([^0-9]+)([0-9]+)')
 
 DATE_FORMAT = "%Y-%m-%d"
 
+# elements we include in the table of contents
+TOC_COMPONENTS = ['coverpage', 'preface', 'preamble', 'part', 'chapter', 'section', 'conclusions']
+
+# These TOC elements aren't numbered uniquely throughout the document
+# and will need their parent components for context
+TOC_NON_UNIQUE_COMPONENTS = ['chapter', 'part']
+
 
 def datestring(value):
     if value is None:
@@ -98,6 +105,8 @@ class Act(Base):
     @expression_date.setter
     def expression_date(self, value):
         self.meta.identification.FRBRExpression.FRBRdate.set('date', datestring(value))
+        # update the URI
+        self.frbr_uri = self.frbr_uri
 
     @property
     def manifestation_date(self):
@@ -116,6 +125,7 @@ class Act(Base):
 
     @publication_name.setter
     def publication_name(self, value):
+        value = value or ""
         pub = self._ensure('meta.publication', after=self.meta.identification)
         pub.set('name', value)
         pub.set('showAs', value)
@@ -124,7 +134,9 @@ class Act(Base):
     def publication_date(self):
         """ Date of the publication """
         pub = self._get('meta.publication')
-        return arrow.get(pub.get('date')).date() if pub is not None else None
+        if pub is not None and pub.get('date'):
+            return arrow.get(pub.get('date')).date()
+        return None
 
     @publication_date.setter
     def publication_date(self, value):
@@ -140,7 +152,7 @@ class Act(Base):
     @publication_number.setter
     def publication_number(self, value):
         self._ensure('meta.publication', after=self.meta.identification)\
-            .set('number', value)
+            .set('number', value or "")
 
     @property
     def language(self):
@@ -168,9 +180,7 @@ class Act(Base):
             uri = FrbrUri.parse(uri)
 
         uri.language = self.meta.identification.FRBRExpression.FRBRlanguage.get('language', 'eng')
-
-        if uri.expression_date is None:
-            uri.expression_date = ''
+        uri.expression_date = '@' + datestring(self.expression_date)
 
         if uri.work_component is None:
             uri.work_component = 'main'
@@ -218,6 +228,70 @@ class Act(Base):
         self.body.getparent().replace(self.body, new_body)
         self.body = new_body
 
+    @property
+    def amendments(self):
+        amendments = []
+
+        for e in self.meta.iterfind('.//{*}lifecycle/{*}eventRef[@type="amendment"]'):
+            date = arrow.get(e.get('date')).date()
+            event = AmendmentEvent(date=date)
+            amendments.append(event)
+
+            id = e.get('source')[1:]
+            source = self.meta.findall('.//{*}references/{*}passiveRef[@id="%s"]' % id)
+            if source:
+                event.amending_title = source[0].get('showAs')
+                event.amending_uri = source[0].get('href')
+
+        amendments.sort(key=lambda a: a.date)
+        return amendments
+
+    @amendments.setter
+    def amendments(self, value):
+        # delete existing entries
+        for e in self.meta.iterfind('.//{*}lifecycle/{*}eventRef[@type="amendment"]'):
+            # delete the passive ref elements
+            id = e.get('source')[1:]
+            for node in self.meta.iterfind('.//{*}references/{*}passiveRef[@id="%s"]' % id):
+                node.getparent().remove(node)
+
+            # delete the event
+            e.getparent().remove(e)
+
+        if not value:
+            # no amendments
+            self.act.set('contains', 'originalVersion')
+        else:
+            self.act.set('contains', 'singleVersion')
+
+            try:
+                after = self.meta.publication
+            except AttributeError:
+                after = self.meta.identification
+
+            lifecycle = self._ensure('meta.lifecycle', after=after)
+            references = self._ensure('meta.references', after=lifecycle)
+
+            for i, event in enumerate(value):
+                date = datestring(event.date)
+                ref = 'amendment-%s-source' % i
+
+                # create the lifecycle element
+                node = self._make('eventRef')
+                node.set('id', 'amendment-' + date)
+                node.set('date', date)
+                node.set('type', 'amendment')
+                node.set('source', '#' + ref)
+                lifecycle.append(node)
+
+                # create the passive ref
+                node = self._make('passiveRef')
+                node.set('id', ref)
+                node.set('href', event.amending_uri)
+                node.set('showAs', event.amending_title)
+                references.append(node)
+
+
     def components(self):
         """ Get an `OrderedDict` of component name to :class:`lxml.objectify.ObjectifiedElement`
         objects.
@@ -235,15 +309,14 @@ class Act(Base):
     def table_of_contents(self):
         """ Get the table of contents of this document as a list of :class:`TOCElement` instances. """
 
-        interesting = set('{%s}%s' % (self.namespace, s) for s in [
-            'coverpage', 'preface', 'preamble', 'part', 'chapter', 'section', 'conclusions'])
+        interesting = set('{%s}%s' % (self.namespace, s) for s in TOC_COMPONENTS)
 
-        def generate_toc(component, elements):
+        def generate_toc(component, elements, parent=None):
             items = []
             for e in elements:
                 if e.tag in interesting:
-                    item = TOCElement(e, component)
-                    item.children = generate_toc(component, e.iterchildren())
+                    item = TOCElement(e, component, parent=parent)
+                    item.children = generate_toc(component, e.iterchildren(), parent=item)
                     items.append(item)
                 else:
                     items += generate_toc(component, e.iterchildren())
@@ -313,11 +386,12 @@ class TOCElement(object):
     :ivar heading: heading for this element, excluding the number, may be None
     :ivar id: XML id string of the node in the document, may be None
     :ivar num: number of this element, as a string, may be None
+    :ivar component: number of the component that this item is a part of, as a string
     :ivar subcomponent: name of this subcomponent, used by :meth:`Act.get_subcomponent`, may be None
     :ivar type: node type, one of: ``chapter, part, section``
     """
 
-    def __init__(self, node, component, children=None):
+    def __init__(self, node, component, parent=None, children=None):
         self.element = node
         self.type = node.tag.split('}', 1)[-1]
         self.id = node.get('id')
@@ -354,8 +428,16 @@ class TOCElement(object):
         if self.type == "doc":
             self.subcomponent = None
         else:
+            # if we have a chapter/part as a child of a chapter/part, we need to include
+            # the parent as context because they aren't unique, eg: part/1/chapter/2
+            if self.type in TOC_NON_UNIQUE_COMPONENTS and parent and parent.type in TOC_NON_UNIQUE_COMPONENTS:
+                self.subcomponent = parent.subcomponent + "/"
+            else:
+                self.subcomponent = ""
+
             # eg. 'preamble' or 'chapter/2'
-            self.subcomponent = self.type
+            self.subcomponent += self.type
+
             if self.num:
                 self.subcomponent += '/' + self.num.strip('.()')
 
@@ -379,6 +461,19 @@ class TOCElement(object):
             info['children'] = [c.as_dict() for c in self.children]
 
         return info
+
+
+class AmendmentEvent(object):
+    """ An event that amended a document.
+
+    :ivar date: :class:`datetime.date` date of the event
+    :ivar amending_title: String title of the amending document
+    :ivar amending_uri: String form of the FRBR URI of the amending document
+    """
+    def __init__(self, date=None, amending_title=None, amending_uri=None):
+        self.date = date
+        self.amending_title = amending_title
+        self.amending_uri = amending_uri
 
 
 EMPTY_DOCUMENT = """<?xml version="1.0"?>
