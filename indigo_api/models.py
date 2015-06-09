@@ -127,6 +127,17 @@ class Document(models.Model):
         self._amended_versions = None
         self.doc.amendments = value
 
+    @property
+    def repeal(self):
+        if not hasattr(self, '_repeal') or self._repeal is None:
+            self._repeal = self.doc.repeal
+        return self._repeal
+
+    @repeal.setter
+    def repeal(self, value):
+        self._repeal = None
+        self.doc.repeal = value
+
     def save(self, *args, **kwargs):
         self.copy_attributes()
         return super(Document, self).save(*args, **kwargs)
@@ -152,6 +163,7 @@ class Document(models.Model):
             # ensure these are refreshed
             self._amendments = None
             self._amended_versions = None
+            self._repeal = None
 
         # update the model's XML from the Act XML
         self.refresh_xml()
@@ -183,7 +195,7 @@ class Document(models.Model):
         If there are no document besides this one, an empty list is returned.
         """
         if not hasattr(self, '_amended_versions'):
-            Documents.decorate_amended_versions([self])
+            Document.decorate_amended_versions([self])
 
         return self._amended_versions
 
@@ -198,11 +210,11 @@ class Document(models.Model):
         # uris that amended docs in the set
         uris = set(a.amending_uri for d in documents for a in d.amendments if a.amending_uri)
         amending_docs = Document.objects\
-                .filter(deleted__exact=False)\
-                .filter(frbr_uri__in=list(uris))\
-                .defer('document_xml')\
-                .order_by('expression_date')\
-                .all()
+            .filter(deleted__exact=False)\
+            .filter(frbr_uri__in=list(uris))\
+            .defer('document_xml')\
+            .order_by('expression_date')\
+            .all()
 
         for doc in documents:
             for a in doc.amendments:
@@ -213,16 +225,41 @@ class Document(models.Model):
                         break
 
     @classmethod
+    def decorate_repeal(cls, documents):
+        """ Decorate the repeal item of each document (if set) with the
+        document id of the repealing document.
+        """
+        # uris that amended docs in the set
+        uris = set(d.repeal.repealing_uri for d in documents if d.repeal)
+        repealing_docs = Document.objects\
+            .filter(deleted__exact=False)\
+            .filter(frbr_uri__in=list(uris))\
+            .defer('document_xml')\
+            .order_by('expression_date')\
+            .all()
+
+        for doc in documents:
+            if doc.repeal:
+                repeal = doc.repeal
+
+                for repealing in repealing_docs:
+                    # match on the URI and the expression date
+                    if repealing.frbr_uri == repeal.repealing_uri and repealing.expression_date == repeal.date:
+                        repeal.repealing_document = repealing
+                        break
+
+    @classmethod
     def decorate_amended_versions(cls, documents):
         """ Decorate each documents with ``_amended_versions``, a (possibly empty)
         list of all the documents which form the same group of amended versions.
         """
         uris = [d.frbr_uri for d in documents]
         docs = Document.objects\
-                .filter(deleted__exact=False)\
-                .filter(frbr_uri__in=uris)\
-                .defer('document_xml')\
-                .order_by('frbr_uri', 'expression_date').all() 
+            .filter(deleted__exact=False)\
+            .filter(frbr_uri__in=uris)\
+            .defer('document_xml')\
+            .order_by('frbr_uri', 'expression_date')\
+            .all()
 
         # group by URI
         groups = {}
