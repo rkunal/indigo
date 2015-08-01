@@ -361,8 +361,7 @@ legend {
 .document-list-table {
   table-layout: fixed;
 
-  th.title { width: 53% }
-  th.draft { width: 7% }
+  th.title { width: 63% }
   th.year { width: 7% }
   th.number { width: 20% }
   th.updated { width: 10% }
@@ -424,7 +423,8 @@ legend {
     &.akn-chapter,
     &.akn-part,
     &.akn-conclusions,
-    &.akn-doc {
+    &.akn-components,
+    &.akn-component {
       font-weight: bold;
       margin-bottom: 5px;
       margin-top: 5px;
@@ -442,6 +442,8 @@ legend {
 
 /* amendments list */
 .amendments-list {
+  margin-top: 20px;
+
   .buttons {
     width: 1%;
     white-space: nowrap;
@@ -449,6 +451,14 @@ legend {
 
   .date {
     width: 10%;
+    white-space: nowrap;
+  }
+}
+
+/* attachments list */
+.attachments-list {
+  .buttons {
+    width: 1%;
     white-space: nowrap;
   }
 }
@@ -462,4 +472,12 @@ legend {
     max-height: 295px;
     overflow-y: scroll;
   }
+}
+
+.fa.draft {
+  color: #f0ad4e;
+}
+
+.fa.published {
+  color: #5bc0de;
 }

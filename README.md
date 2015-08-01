@@ -9,10 +9,11 @@ legislation in the [Akoma Ntoso](http://www.akomantoso.org/) format.
 It is a Django python web application using:
 
 * [Django](http://djangoproject.com/)
+* [Cobalt](http://cobalt.readthedocs.org/en/latest/) -- a lightweight Python library for working with Akoma Ntoso
+* [Slaw](https://rubygems.org/gems/slaw) -- a Ruby Gem for generating Akoma Ntoso from PDFs and other documents
 * [django-rest-framework](http://www.django-rest-framework.org/)
 * [backbone.js](http://backbonejs.org/)
 * [stickit.js](http://nytimes.github.io/backbone.stickit/)
-* [Slaw](https://rubygems.org/gems/slaw) -- a Ruby Gem for generating Akoma Ntoso from PDFs and other documents
 
 Read the [full documentation at indigo.readthedocs.org](http://indigo.readthedocs.org/en/latest/index.html).
 
@@ -30,14 +31,19 @@ python manage.py createsuperuser
 python manage.py runserver
 ```
 
-To support importing from PDF and other file formats, you'll need some ruby dependencies.
+To support importing from PDF and other file formats, you'll need some ruby
+dependencies.  We strongly recommend installing and using [RVM](http://rvm.io/)
+or a similar Ruby version manager.
 
 ```bash
 bundle install
 ```
 
-We strongly recommend installing and using [RVM](http://rvm.io/) or a similar Ruby
-version manager.
+To run the tests use:
+
+```bash
+python manage.py test
+```
 
 Production deployment
 ---------------------
@@ -52,6 +58,7 @@ You will need:
 
 * a django secret key
 * a New Relic license key
+* AWS credentials for S3 uploads
 
 ```bash
 heroku create
@@ -62,7 +69,9 @@ heroku config:set BUILDPACK_URL=https://github.com/ddollar/heroku-buildpack-mult
                   DISABLE_COLLECTSTATIC=1 \
                   DJANGO_SECRET_KEY=some-secret-key \
                   NEW_RELIC_APP_NAME="Indigo" \
-                  NEW_RELIC_LICENSE_KEY=some-license-key
+                  NEW_RELIC_LICENSE_KEY=some-license-key \
+                  AWS_ACCESS_KEY_ID=aws-access-key \
+                  AWS_SECRET_ACCESS_KEY=aws-secret-key
 git push heroku master
 heroku run python manage.py migrate
 heroku run python manage.py createsuperuser

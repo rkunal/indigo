@@ -144,9 +144,26 @@
       </div>
 
       <div class="form-group">
+        <label for="document_expression_date" class="col-sm-2 control-label">Expression date</label>
+        <div class="col-sm-8">
+          <input type="text" class="form-control" data-provide="datepicker" id="document_expression_date" placeholder="yyyy-mm-dd">
+          <p class="help-block">Date of this version of the document, usually the publication date, amendment date, or commencment date</p>
+        </div>
+      </div>
+
+      <div class="form-group">
         <label class="col-sm-2 control-label">Repeal</label>
         <div class="col-sm-10">
           <div class="document-repeal-view form-control-static"></div>
+        </div>
+      </div>
+    </fieldset>
+
+    <fieldset>
+      <legend>Attachments</legend>
+
+      <div class="document-attachments-view">
+        <div class="document-attachments-list">
         </div>
       </div>
     </fieldset>
@@ -206,3 +223,44 @@
 </script>
 
 {% include 'document/_repeal_modal.html' %}
+
+<script id="attachments-template" type="text/x-handlebars-template">
+{% verbatim %}
+
+<table class="table table-condensed table-striped attachments-list">
+  <tr>
+    <th></th>
+    <th>Filename</th>
+    <th>Size</th>
+    <th>Type</th>
+  </tr>
+  {{#each attachments}}
+    <tr data-index="{{ @index }}">
+      <td class="buttons">
+        <a href="#" class="edit-attachment"><i class="fa fa-fw fa-pencil"></i></a>
+        <a href="#" class="delete-attachment"><i class="fa fa-fw fa-remove"></i></a>
+      </td>
+      <td>
+        {{#if download_url }}
+        <a href="{{ download_url }}" target="_blank">{{ filename }}</a>
+        <i class="fa fa-external-link fa-fw text-muted"></i>
+        {{else}}
+        {{ filename }} <i>(new)</i>
+        {{/if}}
+      </td>
+      <td>{{ prettySize }}</td>
+      <td>{{ mime_type }}</td>
+    </tr>
+  {{/each}}
+  <tr>
+    <td class="buttons"></td>
+    <td colspan="3">
+      <input type="file" id="new-attachment-file" multiple="true">
+    </td>
+  </tr>
+</ul>
+
+{% endverbatim %}
+</script>
+
+{% include 'document/_attachment_modal.html' %}

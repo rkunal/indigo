@@ -29,21 +29,60 @@
       return new XMLSerializer().serializeToString(node || this.xmlDocument);
     },
 
-    updateFragment: function(oldNode, newNode) {
-      if (!oldNode || !oldNode.parentNode) {
+    /**
+     * Replaces (or deletes) an existing node (or the whole tree) with a new node or nodes.
+     * Triggers a change event.
+     *
+     * @param {Element} oldNode the node to replace, or null to replace the whole tree
+     * @param {Element[]} newNodes the nodes to replace the old one with, or null to delete the node
+     */
+    replaceNode: function(oldNode, newNodes) {
+      var del = !newNodes;
+      var first = del ? null : newNodes[0];
+
+      if (!oldNode || !oldNode.parentElement) {
+        if (del) {
+          // TODO: we don't currently support deleting whole document
+          throw "Cannot currently delete the entire document.";
+        }
+
         // entire document has changed
+        if (newNodes.length != 1) {
+          throw "Expected exactly one newNode, got " + newNodes.length;
+        }
         console.log('Replacing whole document');
-        this.xmlDocument = newNode;
+        this.xmlDocument = first;
+
       } else {
-        // just a fragment has changed
-        console.log('Replacing node');
-        newNode = oldNode.ownerDocument.importNode(newNode, true);
-        oldNode.parentNode.replaceChild(newNode, oldNode);
+        if (del) {
+          // delete this node
+          console.log('Deleting node');
+          oldNode.remove();
+
+        } else {
+          // just a fragment has changed
+          console.log('Replacing node with ' + newNodes.length + ' new node(s)');
+
+          first = oldNode.ownerDocument.importNode(first, true);
+          oldNode.parentElement.replaceChild(first, oldNode);
+
+          // now append the other nodes, starting at the end
+          // because it makes the insert easier
+          for (var i = newNodes.length-1; i > 0; i--) {
+            var node = first.ownerDocument.importNode(newNodes[i], true);
+
+            if (first.nextElementSibling) {
+              first.parentElement.insertBefore(node, first.nextElementSibling);
+            } else {
+              first.parentElement.appendChild(node);
+            }
+          }
+        }
       }
 
       this.trigger('change');
 
-      return newNode;
+      return first;
     },
   });
 
@@ -104,6 +143,55 @@
   Indigo.AmendmentList = Backbone.Collection.extend({
     model: Indigo.Amendment,
     comparator: 'date',
+  });
+
+  Indigo.Attachment = Backbone.Model.extend({
+    sync: function(method, model, options) {
+      if (method === 'create' && model.get('file')) {
+        // override params passed in for create to allow us to inject the file
+        //
+        // We use the FormData interface which is supported in all decent
+        // browsers and IE 10+.
+        //
+        // https://developer.mozilla.org/en-US/docs/Web/Guide/Using_FormData_Objects
+        var formData = new FormData();
+
+        _.each(model.attributes, function(val, key) {
+          formData.append(key, val);
+        });
+
+        options.data = formData;
+        options.contentType = false;
+      }
+
+      return Backbone.sync.apply(this, [method, model, options]);
+    },
+  });
+
+  Indigo.AttachmentList = Backbone.Collection.extend({
+    model: Indigo.Attachment,
+    comparator: 'filename',
+
+    initialize: function(models, options) {
+      this.document = options.document;
+    },
+
+    url: function() {
+      return this.document.url() + '/attachments';
+    },
+
+    save: function(options) {
+      var self = this;
+
+      // save each object individually
+      return $
+        .when.apply($, this.map(function(obj) {
+          return obj.save(null, {silent: true});
+        }))
+        .done(function() {
+          self.trigger('saved');
+        });
+    },
   });
 
 })(window);

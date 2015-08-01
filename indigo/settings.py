@@ -12,9 +12,6 @@ https://docs.djangoproject.com/en/1.7/ref/settings/
 import os
 BASE_DIR = os.path.dirname(os.path.dirname(__file__))
 
-import sys
-sys.path.append(BASE_DIR + '/lib')
-
 
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/1.7/howto/deployment/checklist/
@@ -41,13 +38,10 @@ INSTALLED_APPS = (
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
-
-    'django_assets',
-
+    'pipeline',
     'rest_framework',
     'rest_framework.authtoken',
     'rest_auth',
-
     'django_extensions',
     'django_nose',
 
@@ -56,6 +50,7 @@ INSTALLED_APPS = (
     'taggit_serializer',
     'countries_plus',
     'languages_plus',
+    'storages',
     'indigo_api',
 
     # the Indigo browser application
@@ -97,8 +92,10 @@ INDIGO_LIME_DEBUG = True
 # https://docs.djangoproject.com/en/1.7/ref/settings/#databases
 
 import dj_database_url
+db_config = dj_database_url.config(default='postgres://bylaws:bylaws@localhost:5432/bylaws')
+db_config['ATOMIC_REQUESTS'] = False
 DATABASES = {
-    'default': dj_database_url.config(default='postgres://bylaws:bylaws@localhost:5432/bylaws')
+    'default': db_config,
 }
 
 # Internationalization
@@ -134,9 +131,17 @@ TEMPLATE_CONTEXT_PROCESSORS = (
     'indigo_app.context_processors.general',
 )
 
-#TEMPLATE_DIRS = (
-#    os.path.join(BASE_DIR, 'templates'),
-#)
+# attachments
+if not DEBUG:
+    DEFAULT_FILE_STORAGE = 'indigo.botopatch.S3Storage'
+    AWS_S3_FILE_OVERWRITE = False
+    AWS_ACCESS_KEY_ID = os.environ.get('AWS_ACCESS_KEY_ID')
+    AWS_SECRET_ACCESS_KEY = os.environ.get('AWS_SECRET_ACCESS_KEY')
+    AWS_STORAGE_BUCKET_NAME = "indigo-media"
+    AWS_S3_HOST = "s3-eu-west-1.amazonaws.com"
+    AWS_HEADERS = {
+        'Cache-Control': 'max-age=86400',
+    }
 
 
 # Static files (CSS, JavaScript, Images)
@@ -153,21 +158,101 @@ STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')
 STATIC_URL = '/static/'
 
 STATICFILES_FINDERS = (
-   "django.contrib.staticfiles.finders.FileSystemFinder",
-   "django.contrib.staticfiles.finders.AppDirectoriesFinder",
-   "django_assets.finders.AssetsFinder"
+    "django.contrib.staticfiles.finders.FileSystemFinder",
+    "django.contrib.staticfiles.finders.AppDirectoriesFinder",
+    "pipeline.finders.PipelineFinder",
 )
 
 # Simplified static file serving.
 # https://warehouse.python.org/project/whitenoise/
-STATICFILES_STORAGE = 'whitenoise.django.GzipManifestStaticFilesStorage'
+STATICFILES_STORAGE = 'indigo.pipeline.GzipManifestPipelineStorage'
+
+
+# django-pipeline and pyscss settings
+
+PIPELINE_CSS = {
+    'css': {
+        'source_filenames': (
+            'bower_components/bootstrap/dist/css/bootstrap.min.css',
+            'bower_components/bootstrap/dist/css/bootstrap-theme.min.css',
+            'bower_components/fontawesome/css/font-awesome.css',
+            'bower_components/bootstrap-datepicker/css/datepicker3.css',
+            'stylesheets/select2-4.0.0.min.css',
+            'stylesheets/app.scss',
+        ),
+        'output_filename': 'app.css',
+    },
+    'lime': {
+        'source_filenames': (
+            'lime/dist/resources/LIME-all.css',
+            'lime/dist/resources/stylesheets/extjs4.editor.css',
+            'lime/dist/resources/stylesheets/extjs4.viewport.css',
+        ),
+        'output_filename': 'lime.css',
+    }
+}
+PIPELINE_JS = {
+    'js': {
+        'source_filenames': (
+            'bower_components/jquery/dist/jquery.min.js',
+            'bower_components/jquery-cookie/jquery.cookie.js',
+            'bower_components/underscore/underscore-min.js',
+            'bower_components/backbone/backbone.js',
+            'bower_components/backbone.stickit/backbone.stickit.js',
+            'bower_components/bootstrap/dist/js/bootstrap.min.js',
+            'bower_components/handlebars/handlebars.min.js',
+            'bower_components/moment/min/moment.min.js',
+            'bower_components/moment/locale/en-gb.js',
+            'bower_components/bootstrap-datepicker/js/bootstrap-datepicker.js',
+            'bower_components/tablesorter/jquery.tablesorter.min.js',
+            'javascript/select2-4.0.0.min.js',
+            'javascript/caret.js',
+            'javascript/prettyprint.js',
+            'javascript/indigo/models.js',
+            'javascript/indigo/views/user.js',
+            'javascript/indigo/views/reset_password.js',
+            'javascript/indigo/views/document_amendments.js',
+            'javascript/indigo/views/document_repeal.js',
+            'javascript/indigo/views/document_attachments.js',
+            'javascript/indigo/views/document_properties.js',
+            'javascript/indigo/views/document_chooser.js',
+            'javascript/indigo/views/document_toc.js',
+            'javascript/indigo/views/document_editor.js',
+            'javascript/indigo/views/document.js',
+            'javascript/indigo/views/library.js',
+            'javascript/indigo/views/error_box.js',
+            'javascript/indigo/views/import.js',
+            'javascript/indigo/timestamps.js',
+            'javascript/indigo.js',
+        ),
+        'output_filename': 'app.js',
+    },
+    'lime': {
+        'source_filenames': ('lime/dist/app.js',),
+        'output_filename': 'lime.js',
+    }
+}
+
+PIPELINE_CSS_COMPRESSOR = None
+PIPELINE_JS_COMPRESSOR = None
+# don't wrap javascript, this breaks LIME
+# see https://github.com/cyberdelia/django-pipeline/blob/ea74ea43ec6caeb4ec46cdeb7d7d70598e64ad1d/pipeline/compressors/__init__.py#L62
+PIPELINE_DISABLE_WRAPPER = True
+PIPELINE_COMPILERS = (
+    'indigo.pipeline.PyScssCompiler',
+)
+
+PYSCSS_LOAD_PATHS = [
+    os.path.join(BASE_DIR, 'indigo_app', 'static'),
+    os.path.join(BASE_DIR, 'indigo_app', 'static', 'bower_components'),
+]
 
 
 # REST
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': (
-       'rest_framework.authentication.SessionAuthentication',
-       'rest_framework.authentication.TokenAuthentication',
+        'rest_framework.authentication.SessionAuthentication',
+        'rest_framework.authentication.TokenAuthentication',
     ),
     'DEFAULT_PERMISSION_CLASSES': [
         'rest_framework.permissions.IsAuthenticatedOrReadOnly',
@@ -187,7 +272,7 @@ EMAIL_SUBJECT_PREFIX = '[Indigo] '
 
 # disable email in development
 if DEBUG:
-   EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'
+    EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'
 
 
 # Logging
@@ -216,6 +301,6 @@ LOGGING = {
         },
         'django': {
             'level': 'DEBUG' if DEBUG else 'INFO',
-        }
+        },
     }
 }
