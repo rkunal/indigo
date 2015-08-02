@@ -137,7 +137,7 @@ if not DEBUG:
     AWS_S3_FILE_OVERWRITE = False
     AWS_ACCESS_KEY_ID = os.environ.get('AWS_ACCESS_KEY_ID')
     AWS_SECRET_ACCESS_KEY = os.environ.get('AWS_SECRET_ACCESS_KEY')
-    AWS_STORAGE_BUCKET_NAME = "indigo-media"
+    AWS_STORAGE_BUCKET_NAME = "openbylawsza"
     AWS_S3_HOST = "s3-eu-west-1.amazonaws.com"
     AWS_HEADERS = {
         'Cache-Control': 'max-age=86400',
