@@ -24,13 +24,14 @@ Contents
 --------
 
 .. toctree::
-   :maxdepth: 2
+   :maxdepth: 1
 
    guide/index
    guide/law-intro
    rest/general
    rest/public
    rest/app
+   running/index
 
 Documents
 ---------

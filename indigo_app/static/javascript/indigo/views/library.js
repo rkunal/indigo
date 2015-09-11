@@ -5,14 +5,13 @@
   Indigo = exports.Indigo;
 
   Indigo.LibraryFilterView = Backbone.View.extend({
-    el: '#filters',
+    el: '.workspace',
     template: '#filters-template',
     events: {
       'click .filter-tag': 'filterByTag',
       'click .filter-country': 'filterByCountry',
       'click .filter-locality': 'filterByLocality',
       'keyup .filter-search': 'filterBySearch',
-      'click .filter-search-clear': 'resetSearch',
       'change .filter-status': 'filterByStatus',
     },
 
@@ -111,8 +110,8 @@
       var $link = $(e.currentTarget);
       var country = $link.data('country') || null;
 
-      $link.parent().children('.active').removeClass('active');
-      $link.addClass('active');
+      $link.closest('ul').find('li').removeClass('active');
+      $link.closest('li').addClass('active');
       this.filters.country = country;
 
       this.trigger('change');
@@ -124,8 +123,8 @@
       var $link = $(e.currentTarget);
       var locality = $link.data('locality') || null;
 
-      $link.parent().children('.active').removeClass('active');
-      $link.addClass('active');
+      $link.closest('ul').find('li').removeClass('active');
+      $link.closest('li').addClass('active');
       this.filters.locality = locality;
 
       this.trigger('change');
@@ -162,12 +161,8 @@
       }
     },
 
-    resetSearch: function(e) {
-      this.$el.find('.filter-search').val('').trigger('keyup');
-    },
-
     render: function() {
-      this.$el.html(this.template({
+      $('#filters').html(this.template({
         summary: this.summary,
         count: this.model.length
       }));

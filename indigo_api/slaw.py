@@ -9,14 +9,45 @@ from .models import Document
 from cobalt.act import Fragment
 
 
-class Importer(object):
+class Slaw(object):
+    log = logging.getLogger(__name__)
+
+    def link_terms(self, document):
+        """
+        Find and link defined terms in a document.
+        """
+        with tempfile.NamedTemporaryFile() as f:
+            f.write(document.content)
+            f.flush()
+            cmd = ['link-definitions', f.name]
+            code, stdout, stderr = self.slaw(cmd)
+            if code > 0:
+                raise ValueError(stderr)
+            document.content = stdout
+
+        return stdout
+
+    def slaw(self, args):
+        """ Call slaw with ``args`` """
+        cmd = ['slaw'] + args
+        self.log.info("Running %s" % cmd)
+        p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        stdout, stderr = p.communicate()
+        self.log.info("Subprocess exit code: %s, stdout=%d bytes, stderr=%d bytes" % (p.returncode, len(stdout), len(stderr)))
+
+        if stderr:
+            self.log.info("Stderr: %s" % stderr.decode('utf-8'))
+
+        return p.returncode, stdout, stderr
+
+
+class Importer(Slaw):
     """
     Import from PDF and other document types using Slaw.
 
     Slaw is a commandline tool from the slaw Ruby Gem which generates Akoma Ntoso
     from PDF and other documents. See https://rubygems.org/gems/slaw
     """
-    log = logging.getLogger(__name__)
 
     """ The name of the AKN element that we're importing, or None for a full act. """
     fragment = None
@@ -29,6 +60,9 @@ class Importer(object):
     """
     section_number_position = 'before-title'
 
+    """ Should we tell Slaw to reformat before parsing? Only do this with initial imports. """
+    reformat = False
+
     def import_from_upload(self, upload):
         """ Create a new Document by importing it from a
         :class:`django.core.files.uploadedfile.UploadedFile` instance.
@@ -38,6 +72,7 @@ class Importer(object):
             doc.content = upload.read().decode('utf-8')
         else:
             with self.tempfile_for_upload(upload) as f:
+                self.reformat = True
                 doc = self.import_from_file(f.name)
 
             if not self.fragment:
@@ -62,12 +97,19 @@ class Importer(object):
 
     def import_from_file(self, fname):
         cmd = ['parse', '--no-definitions']
+
         if self.fragment:
             cmd.extend(['--fragment', self.fragment])
             if self.fragment_id_prefix:
                 cmd.extend(['--id-prefix', self.fragment_id_prefix])
+
+        if self.reformat:
+            cmd.extend(['--reformat'])
+
         if self.section_number_position:
             cmd.extend(['--section-number-position', self.section_number_position])
+
+        cmd.extend(['--pdftotext', settings.INDIGO_PDFTOTEXT])
         cmd.append(fname)
 
         code, stdout, stderr = self.slaw(cmd)
@@ -86,19 +128,6 @@ class Importer(object):
 
         self.log.info("Successfully imported from %s" % fname)
         return doc
-
-    def slaw(self, args):
-        """ Call slaw with ``args`` """
-        cmd = ['slaw'] + args + ['--pdftotext', settings.INDIGO_PDFTOTEXT]
-        self.log.info("Running %s" % cmd)
-        p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        stdout, stderr = p.communicate()
-        self.log.info("Subprocess exit code: %s, stdout=%d bytes, stderr=%d bytes" % (p.returncode, len(stdout), len(stderr)))
-
-        if stderr:
-            self.log.info("Stderr: %s" % stderr.decode('utf-8'))
-
-        return p.returncode, stdout, stderr
 
     def tempfile_for_upload(self, upload):
         """ Uploaded files might not be on disk. If not, create temporary file. """

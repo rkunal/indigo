@@ -112,22 +112,6 @@ USE_L10N = True
 USE_TZ = True
 
 
-# Caches
-if DEBUG:
-    CACHES = {
-        'default': {
-            'BACKEND': 'django.core.cache.backends.dummy.DummyCache',
-        },
-    }
-else:
-    CACHES = {
-        'default': {
-            'BACKEND': 'django.core.cache.backends.filebased.FileBasedCache',
-            'LOCATION': '/var/tmp/django_cache',
-        },
-    }
-
-
 # Templates
 TEMPLATE_DEBUG = DEBUG
 TEMPLATE_LOADERS = (
@@ -153,8 +137,8 @@ if not DEBUG:
     AWS_S3_FILE_OVERWRITE = False
     AWS_ACCESS_KEY_ID = os.environ.get('AWS_ACCESS_KEY_ID')
     AWS_SECRET_ACCESS_KEY = os.environ.get('AWS_SECRET_ACCESS_KEY')
-    AWS_STORAGE_BUCKET_NAME = "openbylawsza"
-    AWS_S3_HOST = "s3-eu-west-1.amazonaws.com"
+    AWS_STORAGE_BUCKET_NAME = os.environ.get('AWS_S3_BUCKET')
+    AWS_S3_HOST = os.environ.get("AWS_S3_HOST", "s3-eu-west-1.amazonaws.com")
     AWS_HEADERS = {
         'Cache-Control': 'max-age=86400',
     }
@@ -230,6 +214,7 @@ PIPELINE_JS = {
             'javascript/indigo/views/document_amendments.js',
             'javascript/indigo/views/document_repeal.js',
             'javascript/indigo/views/document_attachments.js',
+            'javascript/indigo/views/document_analysis.js',
             'javascript/indigo/views/document_properties.js',
             'javascript/indigo/views/document_chooser.js',
             'javascript/indigo/views/document_toc.js',
@@ -282,11 +267,11 @@ REST_FRAMEWORK = {
 
 SUPPORT_EMAIL = 'mariyab@africanlii.org'
 
-DEFAULT_FROM_EMAIL = 'greg@code4sa.org'
-EMAIL_HOST = 'smtp.mandrillapp.com'
-EMAIL_HOST_USER = 'greg@code4sa.org'
+DEFAULT_FROM_EMAIL = os.environ.get('DJANGO_DEFAULT_FROM_EMAIL')
+EMAIL_HOST = os.environ.get('DJANGO_EMAIL_HOST')
+EMAIL_HOST_USER = os.environ.get('DJANGO_EMAIL_HOST_USER')
 EMAIL_HOST_PASSWORD = os.environ.get('DJANGO_EMAIL_HOST_PASSWORD')
-EMAIL_PORT = 587
+EMAIL_PORT = int(os.environ.get('DJANGO_EMAIL_PORT', 25))
 EMAIL_SUBJECT_PREFIX = '[Indigo] '
 
 # disable email in development
