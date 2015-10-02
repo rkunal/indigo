@@ -51,6 +51,7 @@ INSTALLED_APPS = (
     'countries_plus',
     'languages_plus',
     'storages',
+    'reversion',
     'indigo_api',
 
     # the Indigo browser application
@@ -75,13 +76,10 @@ SESSION_ENGINE = 'django.contrib.sessions.backends.signed_cookies'
 
 # where does the pdftotext binary live?
 if DEBUG:
-   INDIGO_PDFTOTEXT = 'pdftotext'
+    INDIGO_PDFTOTEXT = 'pdftotext'
 else:
-   # on heroku, use the bundled version at bin/pdftotext
-   INDIGO_PDFTOTEXT = os.path.abspath(
-         os.path.join(
-            os.path.dirname(__file__),
-            '..', 'bin', 'pdftotext'))
+    # on heroku, use the bundled version at bin/pdftotext
+    INDIGO_PDFTOTEXT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'bin', 'pdftotext'))
 
 # LIME editor
 # We use the compiled version of the LIME editor in production and, by default, development.
@@ -219,9 +217,11 @@ PIPELINE_JS = {
             'javascript/indigo/views/document_chooser.js',
             'javascript/indigo/views/document_toc.js',
             'javascript/indigo/views/document_editor.js',
+            'javascript/indigo/views/document_revisions.js',
             'javascript/indigo/views/document.js',
             'javascript/indigo/views/library.js',
             'javascript/indigo/views/error_box.js',
+            'javascript/indigo/views/progress.js',
             'javascript/indigo/views/import.js',
             'javascript/indigo/timestamps.js',
             'javascript/indigo.js',
@@ -263,16 +263,28 @@ REST_FRAMEWORK = {
         'rest_framework.permissions.AllowAny',
     ],
     'TEST_REQUEST_DEFAULT_FORMAT': 'json',
+    'PAGE_SIZE': 250,
 }
 
-SUPPORT_EMAIL = 'mariyab@africanlii.org'
+# Django Rest Auth
+REST_AUTH_SERIALIZERS = {
+    'USER_DETAILS_SERIALIZER': 'indigo_app.serializers.UserDetailsSerializer',
+}
 
-DEFAULT_FROM_EMAIL = os.environ.get('DJANGO_DEFAULT_FROM_EMAIL')
+SUPPORT_EMAIL = os.environ.get('SUPPORT_EMAIL')
+
+DEFAULT_FROM_EMAIL = os.environ.get('DJANGO_DEFAULT_FROM_EMAIL', SUPPORT_EMAIL)
 EMAIL_HOST = os.environ.get('DJANGO_EMAIL_HOST')
 EMAIL_HOST_USER = os.environ.get('DJANGO_EMAIL_HOST_USER')
 EMAIL_HOST_PASSWORD = os.environ.get('DJANGO_EMAIL_HOST_PASSWORD')
 EMAIL_PORT = int(os.environ.get('DJANGO_EMAIL_PORT', 25))
 EMAIL_SUBJECT_PREFIX = '[Indigo] '
+
+GOOGLE_ANALYTICS_ID = os.environ.get('GOOGLE_ANALYTICS_ID')
+# server-side google analytics
+GOOGLE_ANALYTICS_INCLUDE_PATH = ['/api/']
+if GOOGLE_ANALYTICS_ID and not DEBUG:
+    MIDDLEWARE_CLASSES += ('indigo.middleware.GoogleAnalyticsMiddleware',)
 
 # disable email in development
 if DEBUG:

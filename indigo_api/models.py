@@ -4,9 +4,12 @@ from itertools import groupby
 
 from django.db import models
 from django.db.models import signals
+from django.contrib.auth.models import User
+from django.contrib.contenttypes.models import ContentType
 from django.dispatch import receiver
 import arrow
 from taggit.managers import TaggableManager
+import reversion
 
 from cobalt.act import Act
 
@@ -17,6 +20,11 @@ log = logging.getLogger(__name__)
 
 
 class Document(models.Model):
+    class Meta:
+        permissions = (
+            ('publish_document', 'Can publish and edit non-draft documents'),
+        )
+
     db_table = 'documents'
 
     frbr_uri = models.CharField(max_length=512, null=False, blank=False, default='/', help_text="Used globally to identify this work")
@@ -53,6 +61,9 @@ class Document(models.Model):
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+
+    created_by_user = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name='+')
+    updated_by_user = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name='+')
 
     @property
     def doc(self):
@@ -202,6 +213,16 @@ class Document(models.Model):
 
         return self._amended_versions
 
+    def revisions(self):
+        """ Return a queryset of `reversion.models.Revision` objects for
+        revisions for this document, most recent first.
+        """
+        content_type = ContentType.objects.get_for_model(self)
+        return reversion.models.Revision.objects\
+            .filter(version__content_type=content_type)\
+            .filter(version__object_id_int=self.id)\
+            .order_by('-id')
+
     def __unicode__(self):
         return 'Document<%s, %s>' % (self.id, (self.title or '(Untitled)')[0:50])
 
@@ -277,6 +298,10 @@ class Document(models.Model):
                 doc._amended_versions = []
             else:
                 doc._amended_versions = amended_versions
+
+
+# version tracking
+reversion.register(Document)
 
 
 def attachment_filename(instance, filename):

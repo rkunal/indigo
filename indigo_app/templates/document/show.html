@@ -19,6 +19,10 @@
     {% include "document/_analysis.html" %}
   </div>
 
+  <div id="revisions-tab" class="tab-pane high">
+    {% include "document/_revisions.html" %}
+  </div>
+
   <div id="content-tab" class="tab-pane high">
     {% include "document/_content.html" %}
   </div>
@@ -37,6 +41,7 @@
 <script type="text/javascript">
 if (!window.Indigo) window.Indigo = {};
 window.Indigo.documentPreload = {{ document_json|safe }};
+window.Indigo.documentContentPreload = {{ document_content_json|safe }};
 </script>
 
 {% endblock %}

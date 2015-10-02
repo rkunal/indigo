@@ -7,9 +7,18 @@
   // The document content could be huge, so the API handles it outside
   // of the document data.
   Indigo.DocumentContent = Backbone.Model.extend({
-    url: function() {
-      return '/api/documents/' + this.id + '/content';
+    initialize: function(options) {
+      this.document = options.document;
     },
+
+    isNew: function() {
+      // never new, always use PUT and never POST
+      return false;
+    },
+
+    url: function() {
+      return this.document.url() + '/content';
+    }
   });
 
   // A model-like abstraction for working with
@@ -123,7 +132,11 @@
 
   Indigo.Library = Backbone.Collection.extend({
     model: Indigo.Document,
-    url: '/api/documents'
+    url: '/api/documents',
+    parse: function(response) {
+      // TODO: handle actual pagination
+      return response.results;
+    }
   });
 
   Indigo.User = Backbone.Model.extend({
@@ -146,6 +159,14 @@
   });
 
   Indigo.Attachment = Backbone.Model.extend({
+    initialize: function() {
+      this.on('sync', this.clearFile, this);
+    },
+
+    clearFile: function() {
+      this.unset('file', {silent: true});
+    },
+
     sync: function(method, model, options) {
       if (method === 'create' && model.get('file')) {
         // override params passed in for create to allow us to inject the file
@@ -180,6 +201,11 @@
       return this.document.url() + '/attachments';
     },
 
+    parse: function(response) {
+      // TODO: handle actual pagination
+      return response.results;
+    },
+
     save: function(options) {
       var self = this;
 
@@ -191,6 +217,31 @@
         .done(function() {
           self.trigger('saved');
         });
+    },
+  });
+
+  Indigo.Revision = Backbone.Model.extend({});
+
+  Indigo.RevisionList = Backbone.Collection.extend({
+    model: Indigo.Revision,
+    comparator: 'date',
+  });
+
+  Indigo.RevisionList = Backbone.Collection.extend({
+    model: Indigo.Revision,
+    comparator: 'filename',
+
+    initialize: function(models, options) {
+      this.document = options.document;
+    },
+
+    url: function() {
+      return this.document.url() + '/revisions';
+    },
+
+    parse: function(response) {
+      // TODO: handle actual pagination
+      return response.results;
     },
   });
 

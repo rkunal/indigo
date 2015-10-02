@@ -3,12 +3,15 @@ import os.path
 from lxml.etree import LxmlError
 
 from django.db.models import Manager
-from rest_framework import serializers, renderers
+from django.contrib.auth.models import User
+from rest_framework import serializers
 from rest_framework.reverse import reverse
 from rest_framework.exceptions import ValidationError
+from rest_framework_xml.renderers import XMLRenderer
 from taggit_serializer.serializers import TagListSerializerField
 from cobalt import Act, FrbrUri, AmendmentEvent, RepealEvent
 from cobalt.act import datestring
+import reversion
 
 from .models import Document, Attachment
 from .slaw import Importer
@@ -126,6 +129,35 @@ class AttachmentSerializer(serializers.ModelSerializer):
         return super(AttachmentSerializer, self).update(instance, validated_data)
 
 
+class UserSerializer(serializers.ModelSerializer):
+    display_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = User
+        fields = ('id', 'display_name')
+        read_only_fields = fields
+
+    def get_display_name(self, user):
+        if user.first_name:
+            name = user.first_name
+            if user.last_name:
+                name += ' %s.' % user.last_name[0]
+        else:
+            name = user.username
+
+        return name
+
+
+class RevisionSerializer(serializers.ModelSerializer):
+    date = serializers.DateTimeField(source='date_created')
+    user = UserSerializer()
+
+    class Meta:
+        model = reversion.models.Revision
+        fields = ('id', 'date', 'comment', 'user')
+        read_only_fields = fields
+
+
 class DocumentListSerializer(serializers.ListSerializer):
     def __init__(self, *args, **kwargs):
         super(DocumentListSerializer, self).__init__(*args, **kwargs)
@@ -164,8 +196,13 @@ class DocumentSerializer(serializers.HyperlinkedModelSerializer):
     attachments_url = serializers.SerializerMethodField()
     """ URL of document attachments. """
 
+    links = serializers.SerializerMethodField()
+    """ List of alternate links. """
+
     file = serializers.FileField(write_only=True, required=False)
     """ Allow uploading a file to convert and override the content of the document. """
+
+    draft = serializers.BooleanField(default=True)
 
     publication_name = serializers.CharField(required=False, allow_blank=True, allow_null=True)
     publication_number = serializers.CharField(required=False, allow_blank=True, allow_null=True)
@@ -178,16 +215,18 @@ class DocumentSerializer(serializers.HyperlinkedModelSerializer):
     """ List of amended versions of this document """
     repeal = RepealSerializer(required=False, allow_null=True)
 
+    updated_by_user = UserSerializer(read_only=True)
+    created_by_user = UserSerializer(read_only=True)
+
     class Meta:
         list_serializer_class = DocumentListSerializer
         model = Document
         fields = (
             # readonly, url is part of the rest framework
             'id', 'url',
+            'content', 'content_url', 'file', 'title', 'draft',
+            'created_at', 'updated_at', 'updated_by_user', 'created_by_user',
 
-            'content', 'content_url', 'file',
-
-            'title', 'draft', 'created_at', 'updated_at',
             # frbr_uri components
             'country', 'locality', 'nature', 'subtype', 'year', 'number', 'frbr_uri',
 
@@ -196,7 +235,7 @@ class DocumentSerializer(serializers.HyperlinkedModelSerializer):
             'language', 'stub', 'tags', 'amendments', 'amended_versions',
             'repeal',
 
-            'published_url', 'toc_url', 'attachments_url',
+            'published_url', 'toc_url', 'attachments_url', 'links',
         )
         read_only_fields = ('locality', 'nature', 'subtype', 'year', 'number', 'created_at', 'updated_at')
 
@@ -243,6 +282,30 @@ class DocumentSerializer(serializers.HyperlinkedModelSerializer):
 
         return [describe(d) for d in doc.amended_versions()]
 
+    def get_links(self, doc):
+        if not doc.draft:
+            url = self.get_published_url(doc)
+            return [
+                {
+                    "rel": "alternate",
+                    "title": "HTML",
+                    "href": url + ".html",
+                    "mediaType": "text/html"
+                },
+                {
+                    "rel": "alternate",
+                    "title": "Akoma Ntoso",
+                    "href": url + ".xml",
+                    "mediaType": "application/xml"
+                },
+                {
+                    "rel": "alternate",
+                    "title": "Table of Contents",
+                    "href": url + "/toc.json",
+                    "mediaType": "application/json"
+                },
+            ]
+
     def validate(self, data):
         """
         We allow callers to pass in a file upload in the ``file`` attribute,
@@ -279,25 +342,29 @@ class DocumentSerializer(serializers.HyperlinkedModelSerializer):
 
     def create(self, validated_data):
         document = Document()
+        # force drafts for new documents
+        validated_data['draft'] = True
         return self.update(document, validated_data)
 
     def update(self, document, validated_data):
-        content = validated_data.pop('content', None)
-        amendments = validated_data.pop('amendments', None)
-        tags = validated_data.pop('tags', None)
-        repeal = validated_data.pop('repeal', None)
+        """ Update and save document. """
         source_file = validated_data.pop('source_file', None)
+        tags = self.validated_data.pop('tags', None)
 
-        # Document content must always come first so it can be overridden
-        # by the other properties.
-        if content is not None:
-            document.content = content
+        self.update_document(document, validated_data)
 
-        document = super(DocumentSerializer, self).update(document, validated_data)
+        user = self.context['request'].user
+        if user:
+            document.updated_by_user = user
+            if not document.created_by_user:
+                document.created_by_user = user
 
-        document.repeal = RepealEvent(**repeal) if repeal else None
-        if amendments is not None:
-            document.amendments = [AmendmentEvent(**a) for a in amendments]
+        # save as a revision
+        with reversion.create_revision():
+            reversion.set_user(user)
+            document.save()
+
+        # these require that the document is saved
         if tags is not None:
             document.tags.set(*tags)
 
@@ -305,27 +372,34 @@ class DocumentSerializer(serializers.HyperlinkedModelSerializer):
             # add the source file as an attachment
             AttachmentSerializer(context={'document': document}).create({'file': source_file})
 
-        document.save()
         # reload it to ensure tags are refreshed
         document = Document.objects.get(pk=document.id)
-
         return document
 
-    def update_document(self, instance):
+    def update_document(self, document, validated_data=None):
         """ Update document without saving it. """
+        if validated_data is None:
+            validated_data = self.validated_data
+
+        # Document content must always come first so it can be overridden
+        # by the other properties.
+        content = self.validated_data.pop('content', None)
+        if content is not None:
+            document.content = content
+
         amendments = self.validated_data.pop('amendments', None)
-        repeal = self.validated_data.pop('repeal', None)
-
-        for attr, value in self.validated_data.items():
-            setattr(instance, attr, value)
-
-        instance.repeal = RepealEvent(**repeal) if repeal else None
-
         if amendments is not None:
-            instance.amendments = [AmendmentEvent(**a) for a in amendments]
+            document.amendments = [AmendmentEvent(**a) for a in amendments]
 
-        instance.copy_attributes()
-        return instance
+        repeal = self.validated_data.pop('repeal', None)
+        document.repeal = RepealEvent(**repeal) if repeal else None
+
+        # save rest of changes
+        for attr, value in self.validated_data.items():
+            setattr(document, attr, value)
+
+        document.copy_attributes()
+        return document
 
     def to_representation(self, instance):
         if not self.context.get('many', False):
@@ -361,6 +435,17 @@ class LinkTermsSerializer(serializers.Serializer):
     document = serializers.CharField()
 
 
-class AkomaNtosoRenderer(renderers.XMLRenderer):
+class NoopSerializer(object):
+    """
+    Serializer that doesn't do any serializing, it just makes
+    the data given to it to serialise available as +data+.
+    """
+    def __init__(self, instance, **kwargs):
+        self.context = kwargs.pop('context', {})
+        self.kwargs = kwargs
+        self.data = instance
+
+
+class AkomaNtosoRenderer(XMLRenderer):
     def render(self, data, media_type=None, renderer_context=None):
         return data

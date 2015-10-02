@@ -72,13 +72,29 @@
       '#document_updated_at': {
         observe: 'updated_at',
         onGet: function(value, options) {
-          return value ? moment(value).calendar() : "";
+          if (value) {
+            value = moment(value).calendar();
+            if (this.model.get('updated_by_user')) {
+              value += ' by ' + this.model.get('updated_by_user').display_name;
+            }
+            return value;
+          } else {
+            return "";
+          }
         }
       },
       '#document_created_at': {
         observe: 'created_at',
         onGet: function(value, options) {
-          return moment(value).calendar();
+          if (value) {
+            value = moment(value).calendar();
+            if (this.model.get('created_by_user')) {
+              value += ' by ' + this.model.get('created_by_user').display_name;
+            }
+            return value;
+          } else {
+            return "";
+          }
         }
       },
     },
@@ -166,18 +182,13 @@
 
     save: function(force) {
       // TODO: validation
-      var self = this;
 
       // don't do anything if it hasn't changed
       if (!this.dirty && !force) {
         return $.Deferred().resolve();
       }
 
-      return this.model
-        .save()
-        .done(function() {
-          self.model.attributes.updated_at = moment().format();
-        });
+      return this.model.save();
     },
   });
 })(window);

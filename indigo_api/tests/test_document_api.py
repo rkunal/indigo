@@ -47,6 +47,7 @@ class DocumentAPITest(APITestCase):
 
         assert_equal(response.status_code, 201)
         assert_equal(response.data['frbr_uri'], '/za/act/1998/2')
+        assert_equal(response.data['draft'], True)
         assert_equal(sorted(response.data['tags']), ['bar', 'foo'])
 
     def test_create_with_locality(self):
@@ -209,6 +210,37 @@ class DocumentAPITest(APITestCase):
         response = self.client.delete('/api/documents/%s' % id)
         assert_equal(response.status_code, 403)
 
+    def test_cannot_publish(self):
+        # this user cannot publish
+        self.client.login(username='non-publisher@example.com', password='password')
+
+        response = self.client.post('/api/documents', {'frbr_uri': '/za/act/1998/2'})
+        assert_equal(response.status_code, 201)
+        id = response.data['id']
+
+        response = self.client.put('/api/documents/%s' % id, {'draft': False})
+        assert_equal(response.status_code, 403)
+
+    def test_cannot_unpublish(self):
+        response = self.client.post('/api/documents', {'frbr_uri': '/za/act/1998/2', 'draft': False})
+        assert_equal(response.status_code, 201)
+        id = response.data['id']
+
+        # this user cannot unpublish
+        self.client.login(username='non-publisher@example.com', password='password')
+        response = self.client.put('/api/documents/%s' % id, {'draft': True})
+        assert_equal(response.status_code, 403)
+
+    def test_cannot_update_published(self):
+        response = self.client.post('/api/documents', {'frbr_uri': '/za/act/1998/2', 'draft': False})
+        assert_equal(response.status_code, 201)
+        id = response.data['id']
+
+        # this user cannot edit published
+        self.client.login(username='non-publisher@example.com', password='password')
+        response = self.client.put('/api/documents/%s' % id, {'title': 'A new title'})
+        assert_equal(response.status_code, 403)
+
     def test_table_of_contents(self):
         xml = """
           <chapter id="chapter-2">
@@ -290,7 +322,7 @@ class DocumentAPITest(APITestCase):
         # ensure it shows amending_id when listed
         response = self.client.get('/api/documents')
         assert_equal(response.status_code, 200)
-        doc = list(d for d in response.data if d['frbr_uri'] == '/za/act/1998/2')[0]
+        doc = list(d for d in response.data['results'] if d['frbr_uri'] == '/za/act/1998/2')[0]
         assert_equal(doc['amendments'], [{
             'date': '2010-01-01',
             'amending_title': 'Act 2 of 2010',
@@ -376,13 +408,19 @@ class DocumentAPITest(APITestCase):
         assert_equal(response.status_code, 201)
         id = response.data['id']
 
+        # check the doc
+        response = self.client.get('/api/documents/%s' % id)
+        assert_equal(response.data['draft'], True)
+
         # check the attachment
         response = self.client.get('/api/documents/%s/attachments' % id)
         assert_equal(response.status_code, 200)
-        assert_equal(response.data[0]['mime_type'], 'text/plain')
-        assert_equal(response.data[0]['filename'], os.path.basename(tmp_file.name))
-        assert_equal(response.data[0]['url'],
-                     'http://testserver/api/documents/%s/attachments/%s' % (id, response.data[0]['id']))
+        results = response.data['results']
+
+        assert_equal(results[0]['mime_type'], 'text/plain')
+        assert_equal(results[0]['filename'], os.path.basename(tmp_file.name))
+        assert_equal(results[0]['url'],
+                     'http://testserver/api/documents/%s/attachments/%s' % (id, results[0]['id']))
 
     def test_update_attachment(self):
         # create a doc with an attachment
@@ -403,16 +441,16 @@ class DocumentAPITest(APITestCase):
         # check the attachment
         response = self.client.get('/api/documents/%s/attachments' % id)
         assert_equal(response.status_code, 200)
-        data = response.data[0]
+        data = response.data['results'][0]
         assert_equal(data['mime_type'], 'text/plain')
 
-        # test put
+        # test patch
         data['filename'] = 'new.txt'
         response = self.client.patch(data['url'], data)
         assert_equal(response.status_code, 200)
         assert_equal(response.data['filename'], 'new.txt')
 
-        # test patch
+        # test put
         response = self.client.put(data['url'], {'filename': 'new-from-patch.txt'})
         assert_equal(response.status_code, 200)
         assert_equal(response.data['filename'], 'new-from-patch.txt')

@@ -4,6 +4,8 @@ import logging
 import arrow
 from django.http import Http404, HttpResponse
 from django.template.loader import find_template, render_to_string, TemplateDoesNotExist
+from django.views.decorators.cache import cache_control
+from django.views.decorators.vary import vary_on_headers
 
 from rest_framework.exceptions import ValidationError, MethodNotAllowed
 from rest_framework.views import APIView
@@ -12,20 +14,31 @@ from rest_framework import mixins, viewsets, renderers
 from rest_framework.generics import get_object_or_404
 from rest_framework.response import Response
 from rest_framework.decorators import detail_route
+from rest_framework.pagination import PageNumberPagination
 from rest_framework.permissions import DjangoModelPermissionsOrAnonReadOnly, AllowAny
+import reversion
 
 import lxml.etree as ET
+import lxml.html.diff
 from lxml.etree import LxmlError
 
 from .models import Document, Attachment
-from .serializers import DocumentSerializer, AkomaNtosoRenderer, ConvertSerializer, AttachmentSerializer, LinkTermsSerializer
+from .serializers import DocumentSerializer, AkomaNtosoRenderer, ConvertSerializer, AttachmentSerializer, LinkTermsSerializer, RevisionSerializer
+from .atom import AtomRenderer, AtomFeed
 from .slaw import Importer, Slaw
+from .authz import DocumentPermissions
 from cobalt import FrbrUri
 from cobalt.render import HTMLRenderer
+import newrelic.agent
 
 log = logging.getLogger(__name__)
 
 FORMAT_RE = re.compile('\.([a-z0-9]+)$')
+
+
+def ping(request):
+    newrelic.agent.ignore_transaction()
+    return HttpResponse("pong", content_type="text/plain")
 
 
 def view_attachment(attachment):
@@ -96,7 +109,7 @@ def find_document_template(document):
 
 
 class DocumentViewMixin(object):
-    queryset = Document.objects.filter(deleted__exact=False).prefetch_related('tags').all()
+    queryset = Document.objects.filter(deleted__exact=False).prefetch_related('tags')
 
     def table_of_contents(self, document):
         # this updates the TOC entries by adding a 'url' component
@@ -128,13 +141,21 @@ class DocumentViewSet(DocumentViewMixin, viewsets.ModelViewSet):
     API endpoint that allows Documents to be viewed or edited.
     """
     serializer_class = DocumentSerializer
-    permission_classes = (DjangoModelPermissionsOrAnonReadOnly,)
+    permission_classes = (DjangoModelPermissionsOrAnonReadOnly, DocumentPermissions)
 
     def perform_destroy(self, instance):
         if not instance.draft:
             raise MethodNotAllowed('DELETE', 'DELETE not allowed for published documents, mark as draft first.')
         instance.deleted = True
         instance.save()
+
+    def perform_update(self, serializer):
+        # check permissions just before saving, to prevent users
+        # without publish permissions from setting draft = False
+        if not DocumentPermissions().update_allowed(self.request, serializer):
+            self.permission_denied(self.request)
+
+        super(DocumentViewSet, self).perform_update(serializer)
 
     @detail_route(methods=['GET', 'PUT'])
     def content(self, request, *args, **kwargs):
@@ -164,8 +185,25 @@ class DocumentViewSet(DocumentViewMixin, viewsets.ModelViewSet):
         return Response({'toc': self.table_of_contents(self.get_object())})
 
 
-class AttachmentViewSet(viewsets.ModelViewSet):
-    queryset = Attachment.objects.all()
+class DocumentResourceView(object):
+    """ Helper mixin for views that hang off of a document URL. """
+    def initial(self, request, **kwargs):
+        self.document = self.lookup_document()
+        super(DocumentResourceView, self).initial(request, **kwargs)
+
+    def lookup_document(self):
+        qs = Document.objects.defer('document_xml')
+        doc_id = self.kwargs['document_id']
+        return get_object_or_404(qs, deleted__exact=False, id=doc_id)
+
+    def get_serializer_context(self):
+        context = super(DocumentResourceView, self).get_serializer_context()
+        context['document'] = self.document
+        return context
+
+
+class AttachmentViewSet(DocumentResourceView, viewsets.ModelViewSet):
+    queryset = Attachment.objects
     serializer_class = AttachmentSerializer
 
     @detail_route(methods=['GET'])
@@ -178,22 +216,63 @@ class AttachmentViewSet(viewsets.ModelViewSet):
         attachment = self.get_object()
         return view_attachment(attachment)
 
-    def initial(self, request, **kwargs):
-        self.document = self.lookup_document()
-        super(AttachmentViewSet, self).initial(request, **kwargs)
+    def filter_queryset(self, queryset):
+        return queryset.filter(document=self.document).all()
 
-    def lookup_document(self):
-        qs = Document.objects.defer('document_xml')
-        doc_id = self.kwargs['document_id']
-        return get_object_or_404(qs, deleted__exact=False, id=doc_id)
+
+class RevisionViewSet(DocumentResourceView, viewsets.ReadOnlyModelViewSet):
+    serializer_class = RevisionSerializer
+
+    @detail_route(methods=['POST'])
+    def restore(self, request, *args, **kwargs):
+        # check permissions on the OLD object
+        if not DocumentPermissions().has_object_permission(request, self, self.document):
+            self.permission_denied(self.request)
+
+        revision = self.get_object()
+
+        # check permissions on the NEW object
+        version = revision.version_set.all()[0]
+        document = version.object_version.object
+        if not DocumentPermissions().has_object_permission(request, self, document):
+            self.permission_denied(self.request)
+
+        with reversion.create_revision():
+            reversion.set_user(request.user)
+            reversion.set_comment("Restored revision %s" % revision.id)
+            revision.revert()
+
+        return Response(status=200)
+
+    @detail_route(methods=['GET'])
+    @cache_control(public=True, max_age=24 * 3600)
+    def diff(self, request, *args, **kwargs):
+        # this can be cached because the underlying data won't change (although
+        # the formatting might)
+        revision = self.get_object()
+        version = revision.version_set.all()[0]
+
+        # most recent version just before this one
+        old_version = reversion.models.Version.objects\
+            .filter(content_type=version.content_type)\
+            .filter(object_id_int=version.object_id_int)\
+            .filter(id__lt=version.id)\
+            .order_by('-id')\
+            .first()
+
+        if old_version:
+            old_html = document_to_html(old_version.object_version.object)
+        else:
+            old_html = ""
+        new_html = document_to_html(version.object_version.object)
+        diff = lxml.html.diff.htmldiff(old_html, new_html)
+
+        # TODO: include other diff'd attributes
+
+        return Response({'content': diff})
 
     def get_queryset(self):
-        return Attachment.objects.filter(document=self.document).all()
-
-    def get_serializer_context(self):
-        context = super(AttachmentViewSet, self).get_serializer_context()
-        context['document'] = self.document
-        return context
+        return self.document.revisions()
 
 
 class PublishedDocumentDetailView(DocumentViewMixin,
@@ -201,18 +280,36 @@ class PublishedDocumentDetailView(DocumentViewMixin,
                                   mixins.ListModelMixin,
                                   viewsets.GenericViewSet):
     """
-    The public read-only API for viewing and listing documents by FRBR URI.
+    The public read-only API for viewing and listing published documents by FRBR URI.
+
+    This handles both listing many documents based on a URI prefix, and
+    returning details for a single document. The default content type
+    is JSON.
+
+    For example:
+
+    * ``/za/``: list all published documents for South Africa.
+    * ``/za/act/1994/2/``: one document, Act 2 of 1992
+    * ``/za/act/1994/summary.atom``: all the acts from 1994 as an atom feed
+
     """
-    queryset = DocumentViewMixin.queryset.filter(draft=False)
+    queryset = DocumentViewMixin.queryset.filter(draft=False).order_by('id')
 
     serializer_class = DocumentSerializer
+    pagination_class = PageNumberPagination
     # these determine what content negotiation takes place
-    renderer_classes = (renderers.JSONRenderer, AkomaNtosoRenderer, renderers.StaticHTMLRenderer)
+    renderer_classes = (renderers.JSONRenderer, AtomRenderer, AkomaNtosoRenderer, renderers.StaticHTMLRenderer)
 
     def initial(self, request, **kwargs):
         super(PublishedDocumentDetailView, self).initial(request, **kwargs)
+
         # ensure the URI starts with a slash
         self.kwargs['frbr_uri'] = '/' + self.kwargs['frbr_uri']
+
+        # some of our renderers want to bypass the serializer, so that we get access to the
+        # raw data objects
+        if getattr(self.request.accepted_renderer, 'serializer_class', None):
+            self.serializer_class = self.request.accepted_renderer.serializer_class
 
     def get(self, request, **kwargs):
         # try parse it as an FRBR URI, if that succeeds, we'll lookup the document
@@ -238,13 +335,9 @@ class PublishedDocumentDetailView(DocumentViewMixin,
         except ValueError:
             return self.list(request)
 
-    def list(self, request):
-        # force JSON for list view
-        self.request.accepted_renderer = renderers.JSONRenderer()
-        self.request.accepted_media_type = self.request.accepted_renderer.media_type
-        return super(PublishedDocumentDetailView, self).list(request)
-
     def retrieve(self, request, *args, **kwargs):
+        """ Return details on a single document, possible only part of that document.
+        """
         component = self.frbr_uri.expression_component or 'main'
         subcomponent = self.frbr_uri.expression_subcomponent
         format = self.request.accepted_renderer.format
@@ -260,7 +353,6 @@ class PublishedDocumentDetailView(DocumentViewMixin,
 
             # table of contents
             if (component, format) == ('toc', 'json'):
-                serializer = self.get_serializer(document)
                 return Response({'toc': self.table_of_contents(document)})
 
             # json description
@@ -288,9 +380,71 @@ class PublishedDocumentDetailView(DocumentViewMixin,
 
         raise Http404
 
+    def list(self, request):
+        """ Return details on many documents.
+        """
+        if self.request.accepted_renderer.format == 'atom':
+            # feeds show most recently changed first
+            self.queryset = self.queryset.order_by('-updated_at')
+
+            # what type of feed?
+            if self.kwargs['frbr_uri'].endswith('summary'):
+                self.kwargs['feed'] = 'summary'
+                self.kwargs['frbr_uri'] = self.kwargs['frbr_uri'][:-7]
+            elif self.kwargs['frbr_uri'].endswith('full'):
+                self.kwargs['feed'] = 'full'
+                self.kwargs['frbr_uri'] = self.kwargs['frbr_uri'][:-4]
+            else:
+                raise Http404
+
+            if self.kwargs['feed'] == 'full':
+                # full feed is big, limit it
+                self.paginator.page_size = AtomFeed.full_feed_page_size
+
+        elif self.format_kwarg and self.format_kwarg != "json":
+            # they explicitly asked for something other than JSON,
+            # but listing views don't support that, so 404
+            raise Http404
+
+        else:
+            # either explicitly or implicitly json
+            self.request.accepted_renderer = renderers.JSONRenderer()
+            self.request.accepted_media_type = self.request.accepted_renderer.media_type
+
+        response = super(PublishedDocumentDetailView, self).list(request)
+
+        # add alternate links for json
+        if self.request.accepted_renderer.format == 'json':
+            self.add_alternate_links(response, request)
+
+        return response
+
+    def add_alternate_links(self, response, request):
+        url = reverse('published-document-detail', request=request,
+                      kwargs={'frbr_uri': self.kwargs['frbr_uri'][1:]})
+
+        if url.endswith('/'):
+            url = url[:-1]
+
+        response.data['links'] = [
+            {
+                "rel": "alternate",
+                "title": AtomFeed.summary_feed_title,
+                "href": url + "/summary.atom",
+                "mediaType": AtomRenderer.media_type,
+            },
+            {
+                "rel": "alternate",
+                "title": AtomFeed.full_feed_title,
+                "href": url + "/full.atom",
+                "mediaType": AtomRenderer.media_type,
+            },
+        ]
+
     def get_object(self):
-        """ Find and return one document, used by retrieve() """
-        query = self.get_queryset().filter(frbr_uri=self.frbr_uri.work_uri())\
+        """ Find and return one document, used by retrieve()
+        """
+        query = self.get_queryset().filter(frbr_uri=self.frbr_uri.work_uri())
 
         # filter on expression date
         expr_date = self.frbr_uri.expression_date
@@ -333,19 +487,30 @@ class PublishedDocumentDetailView(DocumentViewMixin,
         return obj
 
     def filter_queryset(self, queryset):
-        """ Filter the queryset, used by list() """
+        """ Filter the queryset, used by list()
+        """
         queryset = queryset.filter(frbr_uri__istartswith=self.kwargs['frbr_uri'])
         if queryset.count() == 0:
             raise Http404
         return queryset
 
     def get_format_suffix(self, **kwargs):
-        # we could also pull this from the parsed URI
+        """ Used during content negotiation.
+        """
         match = FORMAT_RE.search(self.kwargs['frbr_uri'])
         if match:
             # strip it from the uri
             self.kwargs['frbr_uri'] = self.kwargs['frbr_uri'][0:match.start()]
             return match.group(1)
+
+    def handle_exception(self, exc):
+        # Formats like atom and XML don't render exceptions well, so just
+        # fall back to HTML
+        if self.request.accepted_renderer.format in ['xml', 'atom']:
+            self.request.accepted_renderer = renderers.StaticHTMLRenderer()
+            self.request.accepted_media_type = renderers.StaticHTMLRenderer.media_type
+
+        return super(PublishedDocumentDetailView, self).handle_exception(exc)
 
 
 class ConvertView(APIView):

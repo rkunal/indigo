@@ -1,6 +1,6 @@
-from nose.tools import *
-from rest_framework import status
+from nose.tools import *  # noqa
 from rest_framework.test import APITestCase
+
 
 class PublishedAPITest(APITestCase):
     fixtures = ['user', 'published']
@@ -49,17 +49,43 @@ class PublishedAPITest(APITestCase):
         response = self.client.get('/api/za/')
         assert_equal(response.status_code, 200)
         assert_equal(response.accepted_media_type, 'application/json')
-        assert_equal(len(response.data), 4)
+        assert_equal(len(response.data['results']), 4)
 
         response = self.client.get('/api/za/act/')
         assert_equal(response.status_code, 200)
         assert_equal(response.accepted_media_type, 'application/json')
-        assert_equal(len(response.data), 4)
+        assert_equal(len(response.data['results']), 4)
 
         response = self.client.get('/api/za/act/2014')
         assert_equal(response.status_code, 200)
         assert_equal(response.accepted_media_type, 'application/json')
-        assert_equal(len(response.data), 1)
+        assert_equal(len(response.data['results']), 1)
+
+    def test_published_listing_pagination(self):
+        response = self.client.get('/api/za/')
+        assert_equal(response.status_code, 200)
+        assert_equal(response.accepted_media_type, 'application/json')
+        assert_equal(set(response.data.keys()), set(['next', 'previous', 'count', 'results', 'links']))
+
+    def test_published_listing_html_404(self):
+        # explicitly asking for html is bad
+        response = self.client.get('/api/za/act.html')
+        assert_equal(response.status_code, 404)
+        assert_equal(response.accepted_media_type, 'text/html')
+
+    def test_published_atom(self):
+        response = self.client.get('/api/za/summary.atom')
+        assert_equal(response.status_code, 200)
+        assert_equal(response.accepted_media_type, 'application/atom+xml')
+
+        response = self.client.get('/api/za/full.atom')
+        assert_equal(response.status_code, 200)
+        assert_equal(response.accepted_media_type, 'application/atom+xml')
+
+    def test_published_atom_404(self):
+        response = self.client.get('/api/uk/summary.atom')
+        assert_equal(response.status_code, 404)
+        assert_equal(response.accepted_media_type, 'text/html')
 
     def test_published_missing(self):
         assert_equal(self.client.get('/api/za/act/2999/22').status_code, 404)
@@ -106,7 +132,7 @@ class PublishedAPITest(APITestCase):
         response = self.client.get('/api/za/act/2014/10/eng/main/section/1.html')
         assert_equal(response.status_code, 200)
         assert_equal(response.accepted_media_type, 'text/html')
-        assert_equal(response.data, '<div class="akn-section" id="section-1"><h3>1. </h3><span class="akn-content"><span class="akn-p">tester</span></span></div>')
+        assert_equal(response.data, '<section class="akn-section" id="section-1"><h3>1. </h3><span class="akn-content"><span class="akn-p">tester</span></span></section>')
 
     def test_at_expression_date(self):
         response = self.client.get('/api/za/act/2010/1/eng@2011-01-01.json')
@@ -172,3 +198,17 @@ class PublishedAPITest(APITestCase):
             'repealing_title': 'Repeal',
             'repealing_id': 1,
         })
+
+    def test_published_alternate_links(self):
+        response = self.client.get('/api/za/act/2001/8/eng.json')
+        assert_equal(response.status_code, 200)
+        assert_equal(response.accepted_media_type, 'application/json')
+
+        links = response.data['links']
+        links.sort(key=lambda k: k['title'])
+
+        assert_equal(links, [
+            {'href': 'http://testserver/api/za/act/2001/8/eng.xml', 'mediaType': 'application/xml', 'rel': 'alternate', 'title': 'Akoma Ntoso'},
+            {'href': 'http://testserver/api/za/act/2001/8/eng.html', 'mediaType': 'text/html', 'rel': 'alternate', 'title': 'HTML'},
+            {'href': 'http://testserver/api/za/act/2001/8/eng/toc.json', 'mediaType': 'application/json', 'rel': 'alternate', 'title': 'Table of Contents'}
+        ])
