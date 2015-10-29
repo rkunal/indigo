@@ -7,7 +7,6 @@ from django.contrib.auth.models import User
 from rest_framework import serializers
 from rest_framework.reverse import reverse
 from rest_framework.exceptions import ValidationError
-from rest_framework_xml.renderers import XMLRenderer
 from taggit_serializer.serializers import TagListSerializerField
 from cobalt import Act, FrbrUri, AmendmentEvent, RepealEvent
 from cobalt.act import datestring
@@ -160,6 +159,9 @@ class RevisionSerializer(serializers.ModelSerializer):
 
 class DocumentListSerializer(serializers.ListSerializer):
     def __init__(self, *args, **kwargs):
+        if 'child' not in kwargs:
+            kwargs['child'] = DocumentSerializer()
+
         super(DocumentListSerializer, self).__init__(*args, **kwargs)
         # mark on the child that we're doing many, so it doesn't
         # try to decorate the children for us
@@ -294,6 +296,12 @@ class DocumentSerializer(serializers.HyperlinkedModelSerializer):
                 },
                 {
                     "rel": "alternate",
+                    "title": "Standalone HTML",
+                    "href": url + ".html?standalone=1",
+                    "mediaType": "text/html"
+                },
+                {
+                    "rel": "alternate",
                     "title": "Akoma Ntoso",
                     "href": url + ".xml",
                     "mediaType": "application/xml"
@@ -303,6 +311,12 @@ class DocumentSerializer(serializers.HyperlinkedModelSerializer):
                     "title": "Table of Contents",
                     "href": url + "/toc.json",
                     "mediaType": "application/json"
+                },
+                {
+                    "rel": "alternate",
+                    "title": "PDF",
+                    "href": url + ".pdf",
+                    "mediaType": "application/pdf"
                 },
             ]
 
@@ -444,8 +458,3 @@ class NoopSerializer(object):
         self.context = kwargs.pop('context', {})
         self.kwargs = kwargs
         self.data = instance
-
-
-class AkomaNtosoRenderer(XMLRenderer):
-    def render(self, data, media_type=None, renderer_context=None):
-        return data

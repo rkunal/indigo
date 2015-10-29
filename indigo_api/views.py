@@ -1,11 +1,8 @@
 import re
 import logging
 
-import arrow
 from django.http import Http404, HttpResponse
-from django.template.loader import find_template, render_to_string, TemplateDoesNotExist
 from django.views.decorators.cache import cache_control
-from django.views.decorators.vary import vary_on_headers
 
 from rest_framework.exceptions import ValidationError, MethodNotAllowed
 from rest_framework.views import APIView
@@ -18,12 +15,12 @@ from rest_framework.pagination import PageNumberPagination
 from rest_framework.permissions import DjangoModelPermissionsOrAnonReadOnly, AllowAny
 import reversion
 
-import lxml.etree as ET
 import lxml.html.diff
 from lxml.etree import LxmlError
 
 from .models import Document, Attachment
-from .serializers import DocumentSerializer, AkomaNtosoRenderer, ConvertSerializer, AttachmentSerializer, LinkTermsSerializer, RevisionSerializer
+from .serializers import DocumentSerializer, ConvertSerializer, AttachmentSerializer, LinkTermsSerializer, RevisionSerializer
+from .renderers import AkomaNtosoRenderer, PDFResponseRenderer, HTMLResponseRenderer
 from .atom import AtomRenderer, AtomFeed
 from .slaw import Importer, Slaw
 from .authz import DocumentPermissions
@@ -43,6 +40,7 @@ def ping(request):
 
 def view_attachment(attachment):
     response = HttpResponse(attachment.file.read(), content_type=attachment.mime_type)
+    response['Content-Disposition'] = 'inline; filename=%s' % attachment.filename
     response['Content-Length'] = str(attachment.size)
     return response
 
@@ -53,63 +51,16 @@ def download_attachment(attachment):
     return response
 
 
-def document_to_html(document, coverpage=True):
-    """ Render an entire document to HTML.
-
-    :param Boolean coverpage: Should a cover page be generated?
-    """
-    # use this to render the bulk of the document with the Cobalt XSLT renderer
-    renderer = HTMLRenderer(act=document.doc)
-    body_html = renderer.render_xml(document.document_xml)
-
-    # find
-    template_name = find_document_template(document)
-
-    # and then render some boilerplate around it
-    return render_to_string(template_name, {
-        'document': document,
-        'content_html': body_html,
-        'renderer': renderer,
-        'coverpage': coverpage,
-    })
-
-
-def find_document_template(document):
-    """ Return the filename of a template to use to render this document.
-
-    This takes into account the country, type, subtype and language of the document,
-    providing a number of opportunities to adjust the rendering logic.
-    """
-    uri = document.doc.frbr_uri
-    doctype = uri.doctype
-
-    options = []
-    if uri.subtype:
-        options.append('_'.join([doctype, uri.subtype, document.language, uri.country]))
-        options.append('_'.join([doctype, uri.subtype, document.language]))
-        options.append('_'.join([doctype, uri.subtype, uri.country]))
-        options.append('_'.join([doctype, uri.country]))
-        options.append('_'.join([doctype, uri.subtype]))
-
-    options.append('_'.join([doctype, document.language, uri.country]))
-    options.append('_'.join([doctype, document.language]))
-    options.append('_'.join([doctype, uri.country]))
-    options.append(doctype)
-
-    options = [f + '.html' for f in options]
-
-    for option in options:
-        try:
-            if find_template(option):
-                return option
-        except TemplateDoesNotExist:
-            pass
-
-    raise ValueError("Couldn't find a template to use for %s. Tried: %s" % (uri, ', '.join(options)))
-
-
 class DocumentViewMixin(object):
-    queryset = Document.objects.filter(deleted__exact=False).prefetch_related('tags')
+    queryset = Document.objects.undeleted().prefetch_related('tags', 'created_by_user', 'updated_by_user')
+
+    def initial(self, request, **kwargs):
+        super(DocumentViewMixin, self).initial(request, **kwargs)
+
+        # some of our renderers want to bypass the serializer, so that we get access to the
+        # raw data objects
+        if getattr(self.request.accepted_renderer, 'serializer_class', None):
+            self.serializer_class = self.request.accepted_renderer.serializer_class
 
     def table_of_contents(self, document):
         # this updates the TOC entries by adding a 'url' component
@@ -142,6 +93,7 @@ class DocumentViewSet(DocumentViewMixin, viewsets.ModelViewSet):
     """
     serializer_class = DocumentSerializer
     permission_classes = (DjangoModelPermissionsOrAnonReadOnly, DocumentPermissions)
+    renderer_classes = (renderers.JSONRenderer, PDFResponseRenderer, HTMLResponseRenderer, renderers.BrowsableAPIRenderer)
 
     def perform_destroy(self, instance):
         if not instance.draft:
@@ -261,10 +213,10 @@ class RevisionViewSet(DocumentResourceView, viewsets.ReadOnlyModelViewSet):
             .first()
 
         if old_version:
-            old_html = document_to_html(old_version.object_version.object)
+            old_html = old_version.object_version.object.to_html()
         else:
             old_html = ""
-        new_html = document_to_html(version.object_version.object)
+        new_html = version.object_version.object.to_html()
         diff = lxml.html.diff.htmldiff(old_html, new_html)
 
         # TODO: include other diff'd attributes
@@ -293,23 +245,17 @@ class PublishedDocumentDetailView(DocumentViewMixin,
     * ``/za/act/1994/summary.atom``: all the acts from 1994 as an atom feed
 
     """
-    queryset = DocumentViewMixin.queryset.filter(draft=False).order_by('id')
+    queryset = DocumentViewMixin.queryset.published().order_by('id')
 
     serializer_class = DocumentSerializer
     pagination_class = PageNumberPagination
     # these determine what content negotiation takes place
-    renderer_classes = (renderers.JSONRenderer, AtomRenderer, AkomaNtosoRenderer, renderers.StaticHTMLRenderer)
+    renderer_classes = (renderers.JSONRenderer, AtomRenderer, PDFResponseRenderer, AkomaNtosoRenderer, HTMLResponseRenderer)
 
     def initial(self, request, **kwargs):
         super(PublishedDocumentDetailView, self).initial(request, **kwargs)
-
         # ensure the URI starts with a slash
         self.kwargs['frbr_uri'] = '/' + self.kwargs['frbr_uri']
-
-        # some of our renderers want to bypass the serializer, so that we get access to the
-        # raw data objects
-        if getattr(self.request.accepted_renderer, 'serializer_class', None):
-            self.serializer_class = self.request.accepted_renderer.serializer_class
 
     def get(self, request, **kwargs):
         # try parse it as an FRBR URI, if that succeeds, we'll lookup the document
@@ -317,6 +263,10 @@ class PublishedDocumentDetailView(DocumentViewMixin,
         # list documents with a prefix URI match.
         try:
             self.frbr_uri = FrbrUri.parse(self.kwargs['frbr_uri'])
+
+            # ensure we haven't mistaken '/za-cpt/act/by-law/2011/full.atom' for a URI
+            if self.frbr_uri.number in ['full', 'summary'] and self.format_kwarg == 'atom':
+                raise ValueError()
 
             # in a URL like
             #
@@ -338,45 +288,33 @@ class PublishedDocumentDetailView(DocumentViewMixin,
     def retrieve(self, request, *args, **kwargs):
         """ Return details on a single document, possible only part of that document.
         """
-        component = self.frbr_uri.expression_component or 'main'
-        subcomponent = self.frbr_uri.expression_subcomponent
+        # these are made available to the renderer
+        self.component = self.frbr_uri.expression_component or 'main'
+        self.subcomponent = self.frbr_uri.expression_subcomponent
         format = self.request.accepted_renderer.format
 
         # get the document
         document = self.get_object()
 
-        if subcomponent:
-            element = document.doc.get_subcomponent(component, subcomponent)
-
+        if self.subcomponent:
+            self.element = document.doc.get_subcomponent(self.component, self.subcomponent)
         else:
             # special cases of the entire document
 
             # table of contents
-            if (component, format) == ('toc', 'json'):
+            if (self.component, format) == ('toc', 'json'):
                 return Response({'toc': self.table_of_contents(document)})
 
             # json description
-            if (component, format) == ('main', 'json'):
+            if (self.component, format) == ('main', 'json'):
                 serializer = self.get_serializer(document)
                 return Response(serializer.data)
 
-            # entire thing
-            if (component, format) == ('main', 'xml'):
-                return Response(document.document_xml)
-
             # the item we're interested in
-            element = document.doc.components().get(component)
+            self.element = document.doc.components().get(self.component)
 
-        if element:
-            if format == 'html':
-                if component == 'main' and not subcomponent:
-                    coverpage = self.request.GET.get('coverpage', 1) == '1'
-                    return Response(document_to_html(document, coverpage=coverpage))
-                else:
-                    return Response(HTMLRenderer(act=document.doc).render(element))
-
-            if format == 'xml':
-                return Response(ET.tostring(element, pretty_print=True))
+        if self.element and format in ['xml', 'html', 'pdf']:
+            return Response(document)
 
         raise Http404
 
@@ -400,6 +338,12 @@ class PublishedDocumentDetailView(DocumentViewMixin,
             if self.kwargs['feed'] == 'full':
                 # full feed is big, limit it
                 self.paginator.page_size = AtomFeed.full_feed_page_size
+
+        elif self.request.accepted_renderer.format == 'pdf':
+            # TODO: ordering?
+            documents = list(self.filter_queryset(self.get_queryset()).all())
+            # bypass pagination and serialization
+            return Response(documents)
 
         elif self.format_kwarg and self.format_kwarg != "json":
             # they explicitly asked for something other than JSON,
@@ -444,43 +388,12 @@ class PublishedDocumentDetailView(DocumentViewMixin,
     def get_object(self):
         """ Find and return one document, used by retrieve()
         """
-        query = self.get_queryset().filter(frbr_uri=self.frbr_uri.work_uri())
-
-        # filter on expression date
-        expr_date = self.frbr_uri.expression_date
-        if expr_date:
-            try:
-                if expr_date == '@':
-                    # earliest document
-                    query = query.order_by('expression_date')
-
-                elif expr_date[0] == '@':
-                    # document at this date
-                    query = query.filter(expression_date=arrow.get(expr_date[1:]).date())
-
-                elif expr_date[0] == ':':
-                    # latest document at or before this date
-                    query = query\
-                        .filter(expression_date__lte=arrow.get(expr_date[1:]).date())\
-                        .order_by('-expression_date')
-
-                else:
-                    raise Http404("The expression date %s is not valid" % expr_date)
-
-            except arrow.parser.ParserError:
-                raise Http404("The expression date %s is not valid" % expr_date)
-
-        else:
-            # always get the latest expression
-            query = query.order_by('-expression_date')
-
-        obj = query.first()
-        if obj is None:
-            raise Http404("Document doesn't exist")
-
-        if obj.language != self.frbr_uri.language:
-            raise Http404("The document %s exists but is not available in the language '%s'"
-                          % (self.frbr_uri.work_uri(), self.frbr_uri.language))
+        try:
+            obj = self.get_queryset().get_for_frbr_uri(self.frbr_uri)
+            if not obj:
+                raise ValueError()
+        except ValueError as e:
+            raise Http404(e.message)
 
         # May raise a permission denied
         self.check_object_permissions(self.request, obj)
@@ -506,7 +419,7 @@ class PublishedDocumentDetailView(DocumentViewMixin,
     def handle_exception(self, exc):
         # Formats like atom and XML don't render exceptions well, so just
         # fall back to HTML
-        if self.request.accepted_renderer.format in ['xml', 'atom']:
+        if hasattr(self.request, 'accepted_renderer') and self.request.accepted_renderer.format in ['xml', 'atom']:
             self.request.accepted_renderer = renderers.StaticHTMLRenderer()
             self.request.accepted_media_type = renderers.StaticHTMLRenderer.media_type
 
@@ -575,7 +488,7 @@ class ConvertView(APIView):
 
             doc_serializer = DocumentSerializer(instance=document, context={'request': self.request})
             data = doc_serializer.data
-            data['content'] = document.document_xml
+            data['content'] = document.document_xml.decode('utf-8')
             return Response(data)
 
         if output_format == 'application/xml':
@@ -586,9 +499,10 @@ class ConvertView(APIView):
 
         if output_format == 'text/html':
             if self.fragment:
+                # TODO: use document.to_html
                 return Response(HTMLRenderer().render(document.to_xml()))
             else:
-                return Response({'output': document_to_html(document)})
+                return Response({'output': document.to_html()})
 
         # TODO: handle plain text output
 

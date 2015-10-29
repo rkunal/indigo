@@ -19,11 +19,66 @@ DEFAULT_COUNTRY = 'za'
 log = logging.getLogger(__name__)
 
 
+class DocumentQuerySet(models.QuerySet):
+    def undeleted(self):
+        return self.filter(deleted=False)
+
+    def published(self):
+        return self.filter(draft=False)
+
+    def get_for_frbr_uri(self, frbr_uri):
+        """ Find a single document matching the FRBR URI.
+
+        Raises ValueError if any part of the URI isn't valid.
+        """
+        query = self.filter(frbr_uri=frbr_uri.work_uri())
+
+        # filter on expression date
+        expr_date = frbr_uri.expression_date
+        if expr_date:
+            try:
+                if expr_date == '@':
+                    # earliest document
+                    query = query.order_by('expression_date')
+
+                elif expr_date[0] == '@':
+                    # document at this date
+                    query = query.filter(expression_date=arrow.get(expr_date[1:]).date())
+
+                elif expr_date[0] == ':':
+                    # latest document at or before this date
+                    query = query\
+                        .filter(expression_date__lte=arrow.get(expr_date[1:]).date())\
+                        .order_by('-expression_date')
+
+                else:
+                    raise ValueError("The expression date %s is not valid" % expr_date)
+
+            except arrow.parser.ParserError:
+                raise ValueError("The expression date %s is not valid" % expr_date)
+
+        else:
+            # always get the latest expression
+            query = query.order_by('-expression_date')
+
+        obj = query.first()
+        if obj is None:
+            raise ValueError("Document doesn't exist")
+
+        if obj and frbr_uri.language and obj.language != frbr_uri.language:
+            raise ValueError("The document %s exists but is not available in the language '%s'"
+                             % (frbr_uri.work_uri(), frbr_uri.language))
+
+        return obj
+
+
 class Document(models.Model):
     class Meta:
         permissions = (
             ('publish_document', 'Can publish and edit non-draft documents'),
         )
+
+    objects = DocumentQuerySet.as_manager()
 
     db_table = 'documents'
 
@@ -189,8 +244,6 @@ class Document(models.Model):
     def reset_xml(self, xml):
         """ Completely reset the document XML to a new value, and refresh database attributes
         from the new XML document. """
-        log.debug("Setting for %s xml to: %s" % (self, xml))
-
         # this validates it
         doc = Act(xml)
 
@@ -222,6 +275,24 @@ class Document(models.Model):
             .filter(version__content_type=content_type)\
             .filter(version__object_id_int=self.id)\
             .order_by('-id')
+
+    def to_html(self, **kwargs):
+        from .renderers import HTMLRenderer
+        return HTMLRenderer().render(self, **kwargs)
+
+    def element_to_html(self, element):
+        """ Render a child element of this document into HTML. """
+        from .renderers import HTMLRenderer
+        return HTMLRenderer().render(self, element=element)
+
+    def to_pdf(self, **kwargs):
+        from .renderers import PDFRenderer
+        return PDFRenderer().render(self, **kwargs)
+
+    def element_to_pdf(self, element):
+        """ Render a child element of this document into PDF. """
+        from .renderers import PDFRenderer
+        return PDFRenderer().render(self, element=element)
 
     def __unicode__(self):
         return 'Document<%s, %s>' % (self.id, (self.title or '(Untitled)')[0:50])

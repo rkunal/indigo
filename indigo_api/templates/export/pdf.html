@@ -1,0 +1,11 @@
+{% extends "export/base.html" %}
+
+{% block body-class %}pdf{% endblock %}
+
+{% block content %}
+  {% for document, content_html in documents %}
+    <div class="document akoma-ntoso">
+    {{ content_html|safe }}
+    </div>
+  {% endfor %}
+{% endblock %}

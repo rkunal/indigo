@@ -5,6 +5,7 @@ from datetime import date
 import os.path
 from nose.tools import *  # noqa
 from rest_framework.test import APITestCase
+from rest_framework.renderers import JSONRenderer
 
 from indigo_api.tests.fixtures import *  # noqa
 
@@ -14,6 +15,7 @@ class ConvertAPITest(APITestCase):
 
     def setUp(self):
         self.client.default_format = 'json'
+        JSONRenderer.charset = 'utf-8'
         self.client.login(username='email@example.com', password='password')
 
     def test_convert_no_output(self):
@@ -124,7 +126,7 @@ class ConvertAPITest(APITestCase):
         response = self.client.post('/api/convert', {
             'content': {
                 'frbr_uri': '/za/act/1980/20',
-                'content': document_fixture(text='hello κόσμε'),
+                'content': document_fixture(text=u'hello κόσμε'),
             },
             'inputformat': 'application/json',
             'outputformat': 'text/html',

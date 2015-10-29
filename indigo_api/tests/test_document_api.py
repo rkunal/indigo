@@ -1,12 +1,19 @@
+# -*- coding: utf8 -*-
+
 import tempfile
 import os.path
+from mock import patch
 
 from nose.tools import *  # noqa
 from rest_framework.test import APITestCase
+from django.test.utils import override_settings
 
 from indigo_api.tests.fixtures import *  # noqa
+from indigo_api.renderers import PDFRenderer
 
 
+# Disable pipeline storage - see https://github.com/cyberdelia/django-pipeline/issues/277
+@override_settings(STATICFILES_STORAGE='pipeline.storage.PipelineStorage', PIPELINE_ENABLED=False)
 class DocumentAPITest(APITestCase):
     fixtures = ['user']
 
@@ -142,20 +149,20 @@ class DocumentAPITest(APITestCase):
         assert_equal(response.status_code, 201)
         id = response.data['id']
 
-        response = self.client.patch('/api/documents/%s' % id, {'content': document_fixture('in the body')})
+        response = self.client.patch('/api/documents/%s' % id, {'content': document_fixture(u'in γνωρίζω body')})
         assert_equal(response.status_code, 200)
 
         response = self.client.get('/api/documents/%s/content' % id)
         assert_equal(response.status_code, 200)
-        assert_in('<p>in the body</p>', response.data['content'])
+        assert_in(u'<p>in γνωρίζω body</p>', response.data['content'])
 
         # also try updating the content at /content
-        response = self.client.put('/api/documents/%s/content' % id, {'content': document_fixture('also in the body')})
+        response = self.client.put('/api/documents/%s/content' % id, {'content': document_fixture(u'also γνωρίζω the body')})
         assert_equal(response.status_code, 200)
 
         response = self.client.get('/api/documents/%s/content' % id)
         assert_equal(response.status_code, 200)
-        assert_in('<p>also in the body</p>', response.data['content'])
+        assert_in(u'<p>also γνωρίζω the body</p>', response.data['content'])
 
     def test_frbr_uri_lowercased(self):
         # ACT should be changed to act
@@ -454,3 +461,45 @@ class DocumentAPITest(APITestCase):
         response = self.client.put(data['url'], {'filename': 'new-from-patch.txt'})
         assert_equal(response.status_code, 200)
         assert_equal(response.data['filename'], 'new-from-patch.txt')
+
+    @patch.object(PDFRenderer, '_wkhtmltopdf', return_value='pdf-content')
+    def test_document_pdf(self, mock):
+        response = self.client.post('/api/documents', {'frbr_uri': '/za/act/1998/2'})
+        assert_equal(response.status_code, 201)
+        id = response.data['id']
+
+        response = self.client.get('/api/documents/%s.pdf' % id)
+        assert_equal(response.status_code, 200)
+        assert_equal(response.accepted_media_type, 'application/pdf')
+        assert_in('pdf-content', response.content)
+
+    def test_document_pdf_404(self):
+        response = self.client.get('/api/documents/999.pdf')
+        assert_equal(response.status_code, 404)
+
+    def test_document_standalone_html(self):
+        response = self.client.post('/api/documents', {'frbr_uri': '/za/act/1998/2'})
+        assert_equal(response.status_code, 201)
+        id = response.data['id']
+
+        response = self.client.get('/api/documents/%s.html?standalone=1' % id)
+        assert_equal(response.status_code, 200)
+        assert_equal(response.accepted_media_type, 'text/html')
+        assert_not_in('<akomaNtoso', response.content)
+        assert_in('<body  class="standalone"', response.content)
+        assert_in('class="colophon"', response.content)
+        assert_in('class="toc"', response.content)
+
+    def test_document_html(self):
+        response = self.client.post('/api/documents', {'frbr_uri': '/za/act/1998/2'})
+        assert_equal(response.status_code, 201)
+        id = response.data['id']
+
+        response = self.client.get('/api/documents/%s.html' % id)
+        assert_equal(response.status_code, 200)
+        assert_equal(response.accepted_media_type, 'text/html')
+        assert_not_in('<akomaNtoso', response.content)
+        assert_not_in('<body  class="standalone"', response.content)
+        assert_not_in('class="colophon"', response.content)
+        assert_not_in('class="toc"', response.content)
+        assert_in('<div ', response.content)

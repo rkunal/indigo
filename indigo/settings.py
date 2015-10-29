@@ -142,6 +142,21 @@ if not DEBUG:
     }
 
 
+# Caches
+if DEBUG:
+    CACHES = {
+        'default': {
+            'BACKEND': 'django.core.cache.backends.dummy.DummyCache',
+        },
+    }
+else:
+    CACHES = {
+        'default': {
+            'BACKEND': 'django.core.cache.backends.filebased.FileBasedCache',
+            'LOCATION': '/var/tmp/django_cache',
+        },
+    }
+
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/1.7/howto/static-files/
 
@@ -180,6 +195,13 @@ PIPELINE_CSS = {
         ),
         'output_filename': 'app.css',
     },
+    'export': {
+        'source_filenames': (
+            'bower_components/bootstrap/dist/css/bootstrap.min.css',
+            'stylesheets/export.scss',
+        ),
+        'output_filename': 'export.css',
+    },
     'lime': {
         'source_filenames': (
             'lime/dist/resources/LIME-all.css',
@@ -202,7 +224,6 @@ PIPELINE_JS = {
             'bower_components/moment/min/moment.min.js',
             'bower_components/moment/locale/en-gb.js',
             'bower_components/bootstrap-datepicker/js/bootstrap-datepicker.js',
-            'bower_components/tablesorter/jquery.tablesorter.min.js',
             'javascript/select2-4.0.0.min.js',
             'javascript/caret.js',
             'javascript/prettyprint.js',
