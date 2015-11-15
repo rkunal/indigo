@@ -197,7 +197,8 @@ PIPELINE_CSS = {
     },
     'export': {
         'source_filenames': (
-            'bower_components/bootstrap/dist/css/bootstrap.min.css',
+            # these are both in indigo_api/static/
+            'stylesheets/bootstrap.min.css',
             'stylesheets/export.scss',
         ),
         'output_filename': 'export.css',
@@ -268,8 +269,8 @@ PIPELINE_COMPILERS = (
 )
 
 PYSCSS_LOAD_PATHS = [
+    os.path.join(BASE_DIR, 'indigo_api', 'static'),
     os.path.join(BASE_DIR, 'indigo_app', 'static'),
-    os.path.join(BASE_DIR, 'indigo_app', 'static', 'bower_components'),
 ]
 
 
