@@ -11,7 +11,7 @@ from wkhtmltopdf.utils import make_absolute_paths, wkhtmltopdf
 
 from cobalt.render import HTMLRenderer as CobaltHTMLRenderer
 from .serializers import NoopSerializer
-from .models import Document
+from .models import Document, Colophon
 
 
 class AkomaNtosoRenderer(XMLRenderer):
@@ -33,11 +33,12 @@ class AkomaNtosoRenderer(XMLRenderer):
 class HTMLRenderer(object):
     """ Render documents as as HTML.
     """
-    def __init__(self, coverpage=True, standalone=False, template_name=None, cobalt_kwargs=None):
+    def __init__(self, coverpage=True, standalone=False, template_name=None, cobalt_kwargs=None, no_stub_content=False):
         self.template_name = template_name
         self.standalone = standalone
         self.cobalt_kwargs = cobalt_kwargs or {}
         self.coverpage = coverpage
+        self.no_stub_content = no_stub_content
 
     def render(self, document, element=None):
         """ Render this document to HTML.
@@ -54,7 +55,7 @@ class HTMLRenderer(object):
             if not self.standalone:
                 # we're done
                 return content_html
-        elif document.stub:
+        elif self.no_stub_content and document.stub:
             # Stub
             content_html = ''
         else:
@@ -75,16 +76,21 @@ class HTMLRenderer(object):
         # Now render some boilerplate around it.
         if self.standalone:
             context['template_name'] = template_name
-            context['colophon'] = self.find_colophon_template(document)
+            context['colophon'] = self.find_colophon(document)
             return render_to_string('export/standalone.html', context)
         else:
             return render_to_string(template_name, context)
 
-    def find_colophon_template(self, document):
-        try:
-            return self.find_template(document, 'export/colophon_')
-        except ValueError:
-            return None
+    def find_colophon(self, document):
+        colophon = None
+
+        if document.country:
+            colophon = Colophon.objects.filter(country__iso=document.country.upper()).first()
+
+        if not colophon:
+            colophon = Colophon.objects.filter(country=None).first()
+
+        return colophon
 
     def find_template(self, document, prefix=''):
         """ Return the filename of a template to use to render this document.
@@ -145,6 +151,7 @@ class HTMLResponseRenderer(StaticHTMLRenderer):
 
         view = renderer_context['view']
         renderer = HTMLRenderer()
+        renderer.no_stub_content = getattr(renderer_context['view'], 'no_stub_content', False)
         renderer.standalone = renderer_context['request'].GET.get('standalone') == '1'
 
         if not hasattr(view, 'component') or (view.component == 'main' and not view.subcomponent):
@@ -218,11 +225,11 @@ class PDFRenderer(HTMLRenderer):
         the rendered HTML. This renders the colophon using a wrapper
         template to ensure it's a full HTML document.
         """
-        template = self.find_colophon_template(document or documents[0])
-        if template:
+        colophon = self.find_colophon(document or documents[0])
+        if colophon:
             # find the wrapper template
             html = render_to_string('export/pdf_colophon.html', {
-                'colophon': template,
+                'colophon': colophon,
             })
             return make_absolute_paths(html)
 
@@ -283,6 +290,7 @@ class PDFResponseRenderer(BaseRenderer):
         filename = self.get_filename(data, view)
         renderer_context['response']['Content-Disposition'] = 'inline; filename=%s' % filename
         renderer = PDFRenderer()
+        renderer.no_stub_content = getattr(renderer_context['view'], 'no_stub_content', False)
 
         # check the cache
         key = self.cache_key(data, view)
