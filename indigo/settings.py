@@ -52,7 +52,7 @@ INSTALLED_APPS = (
     'languages_plus',
     'storages',
     'reversion',
-    'tinymce',
+    'ckeditor',
     'indigo_api',
 
     # the Indigo browser application
@@ -204,6 +204,15 @@ PIPELINE_CSS = {
         ),
         'output_filename': 'export.css',
     },
+    'epub': {
+        'source_filenames': (
+            # these are in indigo_api/static/
+            'stylesheets/bootstrap.min.css',
+            'stylesheets/export.scss',
+            'stylesheets/epub.scss',
+        ),
+        'output_filename': 'epub.css',
+    },
     'lime': {
         'source_filenames': (
             'lime/dist/resources/LIME-all.css',
@@ -295,15 +304,6 @@ REST_AUTH_SERIALIZERS = {
 }
 
 
-# TinyMCE for editing Colophons in the admin area
-TINYMCE_JS_URL = '/static/bower_components/tinymce-dist/tinymce.min.js'
-TINYMCE_JS_ROOT = BASE_DIR + '/indigo_api/static/bower_components/tinymce-dist/'
-TINYMCE_DEFAULT_CONFIG = {
-    'theme': 'modern',
-    'plugins': "table,spellchecker,paste,searchreplace,link,code",
-}
-TINYMCE_COMPRESSOR = False
-
 SUPPORT_EMAIL = os.environ.get('SUPPORT_EMAIL')
 
 DEFAULT_FROM_EMAIL = os.environ.get('DJANGO_DEFAULT_FROM_EMAIL', SUPPORT_EMAIL)
@@ -312,6 +312,10 @@ EMAIL_HOST_USER = os.environ.get('DJANGO_EMAIL_HOST_USER')
 EMAIL_HOST_PASSWORD = os.environ.get('DJANGO_EMAIL_HOST_PASSWORD')
 EMAIL_PORT = int(os.environ.get('DJANGO_EMAIL_PORT', 25))
 EMAIL_SUBJECT_PREFIX = '[Indigo] '
+
+
+INDIGO_ORGANISATION = os.environ.get('INDIGO_ORGANISATION', 'Indigo Platform')
+
 
 GOOGLE_ANALYTICS_ID = os.environ.get('GOOGLE_ANALYTICS_ID')
 # server-side google analytics

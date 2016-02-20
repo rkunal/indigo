@@ -20,7 +20,7 @@ from lxml.etree import LxmlError
 
 from .models import Document, Attachment
 from .serializers import DocumentSerializer, ConvertSerializer, AttachmentSerializer, LinkTermsSerializer, RevisionSerializer
-from .renderers import AkomaNtosoRenderer, PDFResponseRenderer, HTMLResponseRenderer
+from .renderers import AkomaNtosoRenderer, PDFResponseRenderer, EPUBResponseRenderer, HTMLResponseRenderer
 from .atom import AtomRenderer, AtomFeed
 from .slaw import Importer, Slaw
 from .authz import DocumentPermissions
@@ -93,7 +93,8 @@ class DocumentViewSet(DocumentViewMixin, viewsets.ModelViewSet):
     """
     serializer_class = DocumentSerializer
     permission_classes = (DjangoModelPermissionsOrAnonReadOnly, DocumentPermissions)
-    renderer_classes = (renderers.JSONRenderer, PDFResponseRenderer, HTMLResponseRenderer, renderers.BrowsableAPIRenderer)
+    renderer_classes = (renderers.JSONRenderer, PDFResponseRenderer, EPUBResponseRenderer,
+                        HTMLResponseRenderer, renderers.BrowsableAPIRenderer)
 
     def perform_destroy(self, instance):
         if not instance.draft:
@@ -244,6 +245,7 @@ class PublishedDocumentDetailView(DocumentViewMixin,
     * ``/za/act/1994/2/``: one document, Act 2 of 1992
     * ``/za/act/1994/summary.atom``: all the acts from 1994 as an atom feed
     * ``/za/act/1994.pdf``: all the acts from 1994 as a PDF
+    * ``/za/act/1994.epub``: all the acts from 1994 as an ePUB
 
     """
     queryset = DocumentViewMixin.queryset.published().order_by('id')
@@ -251,7 +253,7 @@ class PublishedDocumentDetailView(DocumentViewMixin,
     serializer_class = DocumentSerializer
     pagination_class = PageNumberPagination
     # these determine what content negotiation takes place
-    renderer_classes = (renderers.JSONRenderer, AtomRenderer, PDFResponseRenderer, AkomaNtosoRenderer, HTMLResponseRenderer)
+    renderer_classes = (renderers.JSONRenderer, AtomRenderer, PDFResponseRenderer, EPUBResponseRenderer, AkomaNtosoRenderer, HTMLResponseRenderer)
 
     def initial(self, request, **kwargs):
         super(PublishedDocumentDetailView, self).initial(request, **kwargs)
@@ -316,7 +318,7 @@ class PublishedDocumentDetailView(DocumentViewMixin,
             # the item we're interested in
             self.element = document.doc.components().get(self.component)
 
-        if self.element and format in ['xml', 'html', 'pdf']:
+        if self.element and format in ['xml', 'html', 'pdf', 'epub']:
             return Response(document)
 
         raise Http404
@@ -342,7 +344,7 @@ class PublishedDocumentDetailView(DocumentViewMixin,
                 # full feed is big, limit it
                 self.paginator.page_size = AtomFeed.full_feed_page_size
 
-        elif self.request.accepted_renderer.format == 'pdf':
+        elif self.request.accepted_renderer.format in ['pdf', 'epub']:
             # TODO: ordering?
             documents = list(self.filter_queryset(self.get_queryset()).all())
             # bypass pagination and serialization
@@ -392,6 +394,12 @@ class PublishedDocumentDetailView(DocumentViewMixin,
                 "title": "PDF",
                 "href": url + ".pdf",
                 "mediaType": "application/pdf"
+            },
+            {
+                "rel": "alternate",
+                "title": "ePUB",
+                "href": url + ".epub",
+                "mediaType": "application/epub+zip"
             },
         ]
 

@@ -127,6 +127,9 @@ class AttachmentSerializer(serializers.ModelSerializer):
             raise ValidationError("Value of 'file' cannot be updated. Delete and re-create this attachment.")
         return super(AttachmentSerializer, self).update(instance, validated_data)
 
+    def validate_filename(self, fname):
+        return fname.replace('/', '')
+
 
 class UserSerializer(serializers.ModelSerializer):
     display_name = serializers.SerializerMethodField()
@@ -204,6 +207,9 @@ class DocumentSerializer(serializers.HyperlinkedModelSerializer):
     file = serializers.FileField(write_only=True, required=False)
     """ Allow uploading a file to convert and override the content of the document. """
 
+    file_options = serializers.DictField(write_only=True, required=False)
+    """ Options when importing a new document using the +file+ field. """
+
     draft = serializers.BooleanField(default=True)
 
     publication_name = serializers.CharField(required=False, allow_blank=True, allow_null=True)
@@ -226,7 +232,7 @@ class DocumentSerializer(serializers.HyperlinkedModelSerializer):
         fields = (
             # readonly, url is part of the rest framework
             'id', 'url',
-            'content', 'content_url', 'file', 'title', 'draft',
+            'content', 'content_url', 'file', 'file_options', 'title', 'draft',
             'created_at', 'updated_at', 'updated_by_user', 'created_by_user',
 
             # frbr_uri components
@@ -318,6 +324,12 @@ class DocumentSerializer(serializers.HyperlinkedModelSerializer):
                     "href": url + ".pdf",
                     "mediaType": "application/pdf"
                 },
+                {
+                    "rel": "alternate",
+                    "title": "ePUB",
+                    "href": url + ".epub",
+                    "mediaType": "application/epub+zip"
+                },
             ]
 
     def validate(self, data):
@@ -329,8 +341,11 @@ class DocumentSerializer(serializers.HyperlinkedModelSerializer):
         if upload:
             # we got a file
             try:
+                # import options
+                posn = data.get('file_options', {}).get('section_number_position', 'guess')
+
                 importer = Importer()
-                importer.section_number_position = 'guess'
+                importer.section_number_position = posn
                 document = importer.import_from_upload(upload)
             except ValueError as e:
                 log.error("Error during import: %s" % e.message, exc_info=e)

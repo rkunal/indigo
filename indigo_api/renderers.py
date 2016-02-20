@@ -2,16 +2,24 @@ import lxml.etree as ET
 import tempfile
 import re
 import os.path
+import codecs
 
 from django.template.loader import find_template, render_to_string, TemplateDoesNotExist
 from django.core.cache import get_cache
+from django.contrib.staticfiles.storage import staticfiles_storage
+from django.conf import settings
 from rest_framework.renderers import BaseRenderer, StaticHTMLRenderer
 from rest_framework_xml.renderers import XMLRenderer
 from wkhtmltopdf.utils import make_absolute_paths, wkhtmltopdf
+from ebooklib import epub
+from pipeline.templatetags.pipeline import PipelineMixin
+from pipeline.collector import default_collector
+from pipeline.packager import Packager
+from languages_plus.models import Language
 
 from cobalt.render import HTMLRenderer as CobaltHTMLRenderer
 from .serializers import NoopSerializer
-from .models import Document, Colophon
+from .models import Document, Colophon, DEFAULT_LANGUAGE
 
 
 class AkomaNtosoRenderer(XMLRenderer):
@@ -237,8 +245,18 @@ class PDFRenderer(HTMLRenderer):
         return wkhtmltopdf(*args, **kwargs)
 
     def pdf_options(self):
-        # see https://eegg.wordpress.com/2010/01/25/page-margins-in-principle-and-practice/ for margin details
-        # Target margins are: 36.3mm (top, bottom); 26.6mm (left, right)
+        # See https://eegg.wordpress.com/2010/01/25/page-margins-in-principle-and-practice/
+        # for background on the two circle canon for calculating margins for an A4 page.
+        #
+        # To calculate margins for a page of width W and height H, plug the following
+        # equation into Wolfram Alpha, and read off the smaller of the two pairs of
+        # values for s (the side margin) and t (the top/bottom margin) in mm.
+        #
+        # y=Mx; (x-W/2)^2+(y-(H-W/2))^2=(W/2)^2; s=W-x; t=H-y; M = H/W; H=297; W=210
+        #
+        # or use this link: http://wolfr.am/8BoqtzV5
+        #
+        # Target margins are: 36.3mm (top, bottom); 25.6mm (left, right)
         # We want to pull the footer (7.5mm high) into the margin, so we decrease
         # the margin slightly
 
@@ -247,7 +265,7 @@ class PDFRenderer(HTMLRenderer):
         footer_spacing = 5
         margin_top = 36.3 - footer_spacing
         margin_bottom = 36.3 - footer_spacing
-        margin_left = 26.6
+        margin_left = 25.6
 
         options = {
             'page-size': 'A4',
@@ -268,6 +286,190 @@ class PDFRenderer(HTMLRenderer):
         }
 
         return options
+
+
+class EPUBRenderer(PipelineMixin, HTMLRenderer):
+    """ Helper to render documents as ePubs.
+
+    The PipelineMixin lets us look up the raw content of the compiled
+    CSS to inject into the epub.
+    """
+    # HTML tags that EPUB doesn't like
+    BAD_DIV_TAG_RE = re.compile(r'(</?)(section)(\s+|>)', re.IGNORECASE)
+    PATH_SUB_RE = re.compile(r'[^a-zA-Z0-9-_]')
+
+    def __init__(self, *args, **kwargs):
+        super(EPUBRenderer, self).__init__(*args, **kwargs)
+
+    def render(self, document, element=None):
+        self.create_book()
+
+        self.book.set_identifier(document.doc.frbr_uri.expression_uri())
+        self.book.set_title(document.title)
+        self.book.set_language(self.language_for(document.language) or 'en')
+        self.book.add_author(settings.INDIGO_ORGANISATION)
+
+        self.add_colophon(document)
+        self.book.spine.append('nav')
+
+        self.add_document(document)
+        return self.to_epub()
+
+    def render_many(self, documents):
+        self.create_book()
+
+        self.book.set_identifier(':'.join(d.doc.frbr_uri.expression_uri() for d in documents))
+        self.book.add_author(settings.INDIGO_ORGANISATION)
+        self.book.set_title('%d documents' % len(documents))
+
+        # language
+        langs = list(set(self.language_for(d.language) or 'en' for d in documents))
+        self.book.set_language(langs[0])
+        for lang in langs[1:]:
+            self.book.add_metadata('DC', 'language', lang)
+
+        self.add_colophon(documents[0])
+        self.book.spine.append('nav')
+
+        for d in documents:
+            self.add_document(d)
+
+        return self.to_epub()
+
+    def create_book(self):
+        self.book = epub.EpubBook()
+        self.book.add_item(epub.EpubNcx())
+        self.book.add_item(epub.EpubNav())
+        self.book.add_metadata('DC', 'publisher', settings.INDIGO_ORGANISATION)
+
+    def add_css(self):
+        # compile assets
+        default_collector.collect(self.request)
+
+        # add the files that produce export.css
+        pkg = self.package_for('epub', 'css')
+        packager = Packager()
+        paths = packager.compile(pkg.paths)
+
+        self.stylesheets = []
+        for path in paths:
+            with codecs.open(staticfiles_storage.path(path), 'r', 'utf-8') as f:
+                css = f.read()
+            self.book.add_item(epub.EpubItem(file_name=path, media_type="text/css", content=css))
+            self.stylesheets.append(path)
+
+        # now ensure all html items link to the stylesheets
+        for item in self.book.items:
+            if isinstance(item, (epub.EpubHtml, epub.EpubNav)):
+                for stylesheet in self.stylesheets:
+                    # relativise path
+                    href = '/'.join(['..'] * item.file_name.count('/') + [stylesheet])
+                    item.add_link(href=href, rel='stylesheet', type='text/css')
+
+    def add_colophon(self, document):
+        colophon = self.find_colophon(document)
+        if colophon:
+            entry = epub.EpubHtml(uid='colophon', file_name='colophon.xhtml')
+            entry.content = self.clean_html(colophon.body, wrap='colophon')
+            self.book.add_item(entry)
+            self.book.spine.append(entry)
+
+    def add_document(self, document):
+        # relative directory for files for this document
+        file_dir = 'doc-%s' % document.id
+        self.renderer = self._xml_renderer(document)
+
+        titlepage = self.add_titlepage(document, file_dir)
+
+        # generate the individual items for each navigable element
+        children = []
+        for item in document.doc.table_of_contents():
+            children.append(self.add_item(item, file_dir))
+
+        # add everything as a child of this document
+        self.book.toc.append((titlepage, children))
+
+    def add_titlepage(self, document, file_dir):
+        # find the template to use
+        template_name = self.template_name or self.find_template(document)
+        context = {
+            'document': document,
+            'element': None,
+            'content_html': '',
+            'renderer': self.renderer,
+            'coverpage': True,
+        }
+        titlepage = render_to_string(template_name, context)
+
+        fname = os.path.join(file_dir, 'titlepage.xhtml')
+        entry = epub.EpubHtml(title=document.title, uid='%s-titlepage' % file_dir, file_name=fname)
+        entry.content = self.clean_html(titlepage, wrap='akoma-ntoso')
+
+        self.book.add_item(entry)
+        self.book.spine.append(entry)
+
+        return entry
+
+    def add_item(self, item, file_dir):
+        id = self.item_id(item)
+        fname = os.path.join(file_dir, self.PATH_SUB_RE.sub('_', id) + '.xhtml')
+
+        entry = epub.EpubHtml(
+            title=item.title,
+            uid='-'.join([file_dir, id]),
+            file_name=fname)
+        entry.content = self.clean_html(self.renderer.render(item.element), wrap='akoma-ntoso')
+
+        self.book.add_item(entry)
+        self.book.spine.append(entry)
+
+        # TOC entries
+        def child_tocs(child):
+            if child.id:
+                us = epub.Link(fname + '#' + child.id, child.title, child.id)
+            else:
+                us = epub.Section(self.item_heading(child))
+
+            if child.children:
+                children = [child_tocs(c) for c in child.children]
+                return [us, children]
+            else:
+                return us
+
+        if item.children:
+            return (entry, [child_tocs(c) for c in item.children])
+        else:
+            return entry
+
+    def to_epub(self):
+        self.add_css()
+
+        with tempfile.NamedTemporaryFile(suffix='.epub') as f:
+            epub.write_epub(f.name, self.book, {})
+            return f.read()
+
+    def item_id(self, item):
+        parts = [item.component]
+
+        id = item.id or item.subcomponent
+        if not id:
+            parts.append(item.type)
+            parts.append(item.num)
+        else:
+            parts.append(id)
+
+        return '-'.join([p for p in parts if p])
+
+    def clean_html(self, html, wrap=None):
+        html = self.BAD_DIV_TAG_RE.sub('\\1div\\3', html)
+        if wrap:
+            html = '<div class="' + wrap + '">' + html + '</div>'
+        return html
+
+    def language_for(self, lang=None):
+        lang = Language.objects.filter(iso_639_2T=lang or DEFAULT_LANGUAGE).first()
+        if lang:
+            return lang.iso
 
 
 class PDFResponseRenderer(BaseRenderer):
@@ -331,7 +533,7 @@ class PDFResponseRenderer(BaseRenderer):
             data = sorted(data, key=lambda d: d.id)
             parts = [(p.id, p.updated_at.isoformat()) for p in data]
 
-        return parts
+        return [self.format] + parts
 
     def get_filename(self, data, view):
         if isinstance(data, Document):
@@ -343,4 +545,46 @@ class PDFResponseRenderer(BaseRenderer):
 
         parts = [re.sub('[/ .]', '-', p) for p in parts if p]
 
-        return '-'.join(parts) + '.pdf'
+        return '-'.join(parts) + '.' + self.format
+
+
+class EPUBResponseRenderer(PDFResponseRenderer):
+    """ Django Rest Framework ePub Renderer.
+    """
+    media_type = 'application/epub+zip'
+    format = 'epub'
+
+    def render(self, data, media_type=None, renderer_context=None):
+        if not isinstance(data, (Document, list)):
+            return ''
+
+        view = renderer_context['view']
+
+        filename = self.get_filename(data, view)
+        renderer_context['response']['Content-Disposition'] = 'inline; filename=%s' % filename
+        renderer = EPUBRenderer()
+        renderer.no_stub_content = getattr(renderer_context['view'], 'no_stub_content', False)
+
+        # check the cache
+        key = self.cache_key(data, view)
+        if key:
+            epub = self.cache.get(key)
+            if epub:
+                return epub
+
+        if isinstance(data, list):
+            # render many
+            epub = renderer.render_many(data)
+        elif not hasattr(view, 'component') or (view.component == 'main' and not view.subcomponent):
+            # whole document
+            epub = renderer.render(data)
+        else:
+            # just one element
+            renderer.toc = False
+            epub = renderer.render(data, view.element)
+
+        # cache it
+        if key:
+            self.cache.set(key, epub)
+
+        return epub

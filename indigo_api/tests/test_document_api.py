@@ -282,6 +282,7 @@ class DocumentAPITest(APITestCase):
                 'heading': 'Administrative provisions',
                 'id': 'chapter-2',
                 'component': 'main',
+                'title': 'Chapter 2 - Administrative provisions',
                 'subcomponent': 'chapter/2',
                 'url': 'http://testserver/api/za/act/1998/2/eng/main/chapter/2',
                 'children': [
@@ -290,6 +291,7 @@ class DocumentAPITest(APITestCase):
                         'num': '3.',
                         'heading': 'Consent required for interment',
                         'id': 'section-3',
+                        'title': '3. Consent required for interment',
                         'component': 'main',
                         'subcomponent': 'section/3',
                         'url': 'http://testserver/api/za/act/1998/2/eng/main/section/3',
@@ -462,6 +464,11 @@ class DocumentAPITest(APITestCase):
         assert_equal(response.status_code, 200)
         assert_equal(response.data['filename'], 'new-from-patch.txt')
 
+        # test put with slashes in filename
+        response = self.client.put(data['url'], {'filename': '/with/slashes.txt'})
+        assert_equal(response.status_code, 200)
+        assert_equal(response.data['filename'], 'withslashes.txt')
+
     @patch.object(PDFRenderer, '_wkhtmltopdf', return_value='pdf-content')
     def test_document_pdf(self, mock):
         response = self.client.post('/api/documents', {'frbr_uri': '/za/act/1998/2'})
@@ -473,8 +480,22 @@ class DocumentAPITest(APITestCase):
         assert_equal(response.accepted_media_type, 'application/pdf')
         assert_in('pdf-content', response.content)
 
+    def test_document_epub(self):
+        response = self.client.post('/api/documents', {'frbr_uri': '/za/act/1998/2'})
+        assert_equal(response.status_code, 201)
+        id = response.data['id']
+
+        response = self.client.get('/api/documents/%s.epub' % id)
+        assert_equal(response.status_code, 200)
+        assert_equal(response.accepted_media_type, 'application/epub+zip')
+        assert_true(response.content.startswith('PK'))
+
     def test_document_pdf_404(self):
         response = self.client.get('/api/documents/999.pdf')
+        assert_equal(response.status_code, 404)
+
+    def test_document_epub_404(self):
+        response = self.client.get('/api/documents/999.epub')
         assert_equal(response.status_code, 404)
 
     def test_document_standalone_html(self):

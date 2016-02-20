@@ -38,7 +38,9 @@ body.pdf {
   }
 }
 
-.toc {
+// TOC and nav for ebpub
+.toc,
+nav#id {
   h2 {
     font-size: 24px;
     text-align: center;
@@ -48,12 +50,12 @@ body.pdf {
     font-size: 18px;
   }
 
-  ul {
+  ol {
     margin-bottom: 1em;
     padding-left: 0em;
   }
 
-  ul ul {
+  ol ol {
     padding-left: 1em;
   }
 
@@ -65,6 +67,4 @@ body.pdf {
   margin-bottom: 5em;
 }
 
-.akoma-ntoso {
-  @import 'akoma-ntoso';
-}
+@import 'akoma-ntoso';

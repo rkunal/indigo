@@ -79,10 +79,11 @@
           document_id = $('[data-document-id]').data('document-id') || null;
 
       this.$saveBtn = $('.workspace-buttons .btn.save');
+      this.dirty = false;
 
       // The document page eager loads the document details into this
       // variable.
-      var info = Indigo.documentPreload;
+      var info = Indigo.Preloads.document;
 
       this.document = new Indigo.Document(info, {collection: library, parse: true});
       this.document.on('change', this.setDirty, this);
@@ -134,7 +135,7 @@
       this.document.trigger('sync');
 
       // preload content
-      this.documentContent.set('content', Indigo.documentContentPreload);
+      this.documentContent.set('content', Indigo.Preloads.documentContent);
 
       if (document_id) {
         // pretend this document is unchanged
@@ -167,7 +168,8 @@
       // our preview is now dirty
       this.previewDirty = true;
 
-      if (this.$saveBtn.prop('disabled')) {
+      if (!this.dirty) {
+        this.dirty = true;
         this.$saveBtn
           .removeClass('btn-default')
           .addClass('btn-info')
@@ -178,6 +180,7 @@
     setClean: function() {
       // disable the save button if all views are clean
       if (!this.propertiesView.dirty && !this.bodyEditorView.dirty && !this.attachmentsView.dirty) {
+        this.dirty = false;
         this.$saveBtn
           .addClass('btn-default')
           .removeClass('btn-info')

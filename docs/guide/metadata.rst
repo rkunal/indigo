@@ -35,7 +35,7 @@ or the source has not been fully checked.
 
 .. note::
 
-    Administrators can add new countries, languages and document subtypes through the Admin interface.
+    Administrators can add new countries, languages and document subtypes through the Admin interface. Click on your name in the top-right corner and choose **Site Settings**.
 
 
 Promulgation
@@ -74,3 +74,23 @@ If the amending document is already in the library, you can choose it from the l
 
 To create a newly amended version of a document, edit the version just before the new amendments need to be applied and click **Clone Document**
 to create a copy, and then edit that copy.
+
+Attachments
+-----------
+
+The Attachments section lets you attach files to your document. This is generally used to link a source PDF, Word or other file with your document, but you can upload any file you like. When creating a new document by importing a file, the file is automatically added as an attachment.
+
+To upload a new file, click on **Attachments** and then click the **Choose Files** button.
+
+You can change the name of an attachment by clicking the pencil (edit) icon.
+
+Defined Terms Analysis
+----------------------
+
+Indigo can find defined terms in a document and associate occurrences of a term with its definition. It does this by looking for a section called ``Definitions`` or ``Interpretation`` and looking for sentences that look like definitions. It then looks through the document to find uses of any defined terms it has found.
+
+To find and link terms, click **Analysis** and then **Find and link defined terms**.
+
+When viewing a document, Indigo marks the definition of a defined term **in bold**.
+
+.. important:: Defined terms are lost when a section is edited. It's best to find and link defined terms just before publishing a final document, or after doing a batch of updates.
