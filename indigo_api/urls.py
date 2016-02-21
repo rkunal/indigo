@@ -20,6 +20,7 @@ urlpatterns = patterns('',
 
     url(r'^convert(\.(?P<format>[a-z0-9]))?$', views.ConvertView.as_view(), name='convert'),
     url(r'^analysis/link-terms$', views.LinkTermsView.as_view(), name='link-terms'),
+    url(r'^search$', 'indigo_api.es.search_view', name='search'),
 
     url(r'^', include(router.urls)),
 )
