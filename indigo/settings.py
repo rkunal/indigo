@@ -53,6 +53,7 @@ INSTALLED_APPS = (
     'storages',
     'reversion',
     'ckeditor',
+    'corsheaders',
     'indigo_api',
 
     # the Indigo browser application
@@ -61,6 +62,7 @@ INSTALLED_APPS = (
 
 MIDDLEWARE_CLASSES = (
     'django.contrib.sessions.middleware.SessionMiddleware',
+    'corsheaders.middleware.CorsMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
@@ -109,6 +111,9 @@ USE_I18N = True
 USE_L10N = True
 
 USE_TZ = True
+
+# CORS
+CORS_ORIGIN_ALLOW_ALL = True
 
 
 # Templates
@@ -315,6 +320,9 @@ EMAIL_SUBJECT_PREFIX = '[Indigo] '
 
 
 INDIGO_ORGANISATION = os.environ.get('INDIGO_ORGANISATION', 'Indigo Platform')
+
+ELASTICSEARCH_URL = os.environ.get('ELASTICSEARCH_URL', 'http://localhost:9200')
+ELASTICSEARCH_INDEX = os.environ.get('ELASTICSEARCH_INDEX', 'openbylaws.org.za')
 
 
 GOOGLE_ANALYTICS_ID = os.environ.get('GOOGLE_ANALYTICS_ID')
