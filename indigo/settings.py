@@ -320,10 +320,10 @@ EMAIL_SUBJECT_PREFIX = '[Indigo] '
 
 
 INDIGO_ORGANISATION = os.environ.get('INDIGO_ORGANISATION', 'Indigo Platform')
+INDIGO_URL = os.environ.get('INDIGO_URL', 'https://indigo.code4sa.org')
 
 ELASTICSEARCH_URL = os.environ.get('ELASTICSEARCH_URL', 'http://localhost:9200')
 ELASTICSEARCH_INDEX = os.environ.get('ELASTICSEARCH_INDEX', 'openbylaws.org.za')
-
 
 GOOGLE_ANALYTICS_ID = os.environ.get('GOOGLE_ANALYTICS_ID')
 # server-side google analytics
