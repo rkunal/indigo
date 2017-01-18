@@ -6,6 +6,28 @@
   <xsl:output method="text" indent="no" omit-xml-declaration="yes" />
   <xsl:strip-space elements="*"/>
 
+  <!-- adds a backslash to the start of the value param, if necessary -->
+  <xsl:template name="escape">
+    <xsl:param name="value"/>
+
+    <xsl:variable name="prefix" select="translate(substring($value, 1, 10), 'abcdefghijklmnopqrstuvwxyz', 'ABCDEFGHIJKLMNOPQRSTUVWXYZ')" />
+    <xsl:variable name="numprefix" select="translate(substring($value, 1, 3), '1234567890', 'NNNNNNNNNN')" />
+
+    <!-- p tags must escape initial content that looks like a block element marker -->
+    <xsl:if test="$prefix = 'BODY' or
+                  $prefix = 'PREAMBLE' or
+                  $prefix = 'PREFACE' or
+                  starts-with($prefix, 'CHAPTER ') or
+                  starts-with($prefix, 'PART ') or
+                  starts-with($prefix, 'SCHEDULE ') or
+                  starts-with($prefix, '{|') or
+                  starts-with($numprefix, '(') or
+                  starts-with($numprefix, 'N.')">
+      <xsl:text>\</xsl:text>
+    </xsl:if>
+    <xsl:value-of select="$value"/>
+  </xsl:template>
+
   <xsl:template match="a:act">
     <xsl:apply-templates select="a:coverPage" />
     <xsl:apply-templates select="a:preface" />
@@ -73,8 +95,16 @@
   </xsl:template>
 
   <!-- these are block elements and have a newline at the end -->
-  <xsl:template match="a:heading|a:p">
+  <xsl:template match="a:heading">
     <xsl:apply-templates />
+    <xsl:text>
+
+</xsl:text>
+  </xsl:template>
+
+  <xsl:template match="a:p">
+    <xsl:apply-templates/>
+    <!-- p tags must end with a newline -->
     <xsl:text>
 
 </xsl:text>
@@ -104,6 +134,13 @@
 </xsl:text>
     </xsl:if>
     <xsl:apply-templates select="./*[not(self::a:intro)]" />
+  </xsl:template>
+
+  <!-- first text nodes of these elems must be escaped if they have special chars -->
+  <xsl:template match="a:p/text()[1] | a:listIntroduction/text()[1] | a:intro/text()[1]">
+    <xsl:call-template name="escape">
+      <xsl:with-param name="value" select="." />
+    </xsl:call-template>
   </xsl:template>
 
   <!-- components/schedules -->
@@ -191,6 +228,11 @@
     <xsl:text>[</xsl:text>
     <xsl:apply-templates />
     <xsl:text>]</xsl:text>
+  </xsl:template>
+
+  <xsl:template match="a:eol">
+    <xsl:text>
+</xsl:text>
   </xsl:template>
 
 

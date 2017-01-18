@@ -45,6 +45,16 @@ $(function() {
       Indigo.progressView.pop();
     });
 
+  // error tracking with GA
+  window.addEventListener('error', function(e) {
+    if (typeof ga === 'function') {
+      ga('send', 'exception', {
+        'exDescription': e.message + ' @ ' + e.filename + ': ' + e.lineno,
+        'exFatal': true,
+      });
+    }
+  });
+
   // datepicker
   $.fn.datepicker.defaults.format = "yyyy-mm-dd";
   $.fn.datepicker.defaults.autoclose = true;
@@ -57,6 +67,17 @@ $(function() {
 
   Indigo.progressView = new Indigo.ProgressView();
   Indigo.errorView = new Indigo.ErrorBoxView();
+
+  // helpers
+  Indigo.toXml = function(node) {
+    return new XMLSerializer().serializeToString(node);
+  };
+  Indigo.ga = function() {
+    // google analytics are only in production
+    if (window.ga) {
+      ga.apply(null, arguments);
+    }
+  };
 
   // always load the user view
   Indigo.userView = new Indigo.UserView();
