@@ -67,31 +67,39 @@
   Indigo.DocumentView = Backbone.View.extend({
     el: 'body',
     events: {
+      'click .menu .disabled a': 'stopMenuClick',
+      'click .menu .dropdown-submenu > a': 'stopMenuClick',
       'click .workspace-buttons .btn.save': 'save',
-      'click .btn.delete-document': 'delete',
+      'click .menu .save a': 'save',
+      'click .menu .delete-document a': 'delete',
+      'click .menu .clone-document a': 'clone',
       'hidden.bs.tab a[href="#content-tab"]': 'tocDeselected',
       'shown.bs.tab a[href="#preview-tab"]': 'renderPreview',
-      'click .btn.clone': 'createClone',
     },
 
     initialize: function() {
-      var library = new Indigo.Library(),
+      var library = Indigo.library,
           document_id = $('[data-document-id]').data('document-id') || null;
 
       this.$saveBtn = $('.workspace-buttons .btn.save');
+      this.$menu = $('.workspace-header .menu');
       this.dirty = false;
 
-      // The document page eager loads the document details into this
-      // variable.
-      var info = Indigo.Preloads.document;
+      if (document_id) {
+        // get it from the library
+        this.document = Indigo.library.get(document_id);
+      } else {
+        // only for new documents
+        this.document = new Indigo.Document(Indigo.Preloads.document, {collection: library, parse: true});
+      }
 
-      this.document = new Indigo.Document(info, {collection: library, parse: true});
       this.document.on('change', this.setDirty, this);
       this.document.on('change', this.allowDelete, this);
+      this.document.expressionSet = Indigo.library.expressionSet(this.document);
 
       this.documentContent = new Indigo.DocumentContent({document: this.document});
       this.documentContent.on('change', this.setDirty, this);
-
+      
       this.user = Indigo.userView.model;
       this.user.on('change', this.userChanged, this);
 
@@ -109,7 +117,7 @@
       this.attachmentsView.on('dirty', this.setDirty, this);
       this.attachmentsView.on('clean', this.setClean, this);
 
-      this.analysisView = new Indigo.DocumentAnalysisView({model: this.documentContent});
+      this.definedTermsView = new Indigo.DocumentDefinedTermsView({model: this.documentContent});
 
       this.revisionsView = new Indigo.DocumentRevisionsView({document: this.document});
 
@@ -141,6 +149,16 @@
         this.propertiesView.calculateUri();
         this.setDirty();
       }
+
+      // make menu peers behave like real menus on hover
+      $('.menu .btn-link').on('mouseover', function(e) {
+        var $menuItem = $(this),
+            $parent = $menuItem.parent();
+            
+        if (!$parent.hasClass("open") && $parent.siblings(".open").length) {
+          $menuItem.click();
+        }
+      });
     },
 
     windowUnloading: function(e) {
@@ -166,6 +184,7 @@
           .removeClass('btn-default')
           .addClass('btn-info')
           .prop('disabled', false);
+        this.$menu.find('.save').removeClass('disabled');
       }
     },
 
@@ -180,12 +199,13 @@
           .find('.fa')
             .removeClass('fa-pulse fa-spinner')
             .addClass('fa-save');
+        this.$menu.find('.save').addClass('disabled');
       }
     },
 
     allowDelete: function() {
-      this.$el.find('.btn.delete-document').prop('disabled',
-        this.document.isNew() || !this.user.authenticated() || !this.document.get('draft'));
+      this.$menu.find('.delete-document').toggleClass('disabled',
+        this.document.isNew() || !this.user.authenticated());
     },
 
     userChanged: function() {
@@ -199,7 +219,7 @@
       var deferred = null;
 
       // always save properties if we save content
-      this.propertiesView.dirty = this.bodyEditorView.dirty || is_new;
+      this.propertiesView.dirty = this.propertiesView.dirty || this.bodyEditorView.dirty || is_new;
 
       var fail = function() {
         self.$saveBtn
@@ -207,6 +227,7 @@
           .find('.fa')
             .removeClass('fa-pulse fa-spinner')
             .addClass('fa-save');
+        self.$menu.find('.save').removeClass('disabled');
       };
 
       this.$saveBtn
@@ -214,6 +235,7 @@
         .find('.fa')
           .removeClass('fa-save')
           .addClass('fa-pulse fa-spinner');
+      this.$menu.find('.save').addClass('disabled');
 
       if (is_new) {
         // save properties first, to get an ID, then
@@ -271,7 +293,13 @@
     },
 
     delete: function() {
+      if (!this.document.get('draft')) {
+        alert('You cannot delete published documents. Please mark the document as a draft and try again.');
+        return;
+      }
+
       if (confirm('Are you sure you want to delete this document?')) {
+        Indigo.progressView.peg();
         this.document
           .destroy()
           .then(function() {
@@ -280,37 +308,29 @@
       }
     },
 
-    // Create a clone of the document and redirect them there
-    createClone: function(e) {
-      if (confirm('Create a copy of this document? Unsaved changes will be lost!')) {
-        // clone and reset some attributes
+    clone: function() {
+      var title = prompt('Name for the copy', 'Copy of ' + this.document.get('title'));
+
+      if (title) {
         var clone = this.document.clone();
         clone.set({
-          content: this.documentContent.get('content'),
           draft: true,
-          title: 'Copy of ' + clone.get('title'),
+          title: title,
           id: null,
+          content: this.documentContent.get('content'),
         });
 
-        var $btn = $(e.target);
-        $btn
-          .toggleClass('disabled')
-          .find('.fa')
-          .toggleClass('fa-copy fa-pulse fa-spinner');
-
-        clone
-          .save(null, {parse: false})
-          .done(function(response) {
-            // redirect
-            document.location = '/documents/' + response.id + '/';
-          })
-          .fail(function() {
-            $btn
-              .toggleClass('disabled')
-              .find('.fa')
-              .toggleClass('fa-copy fa-pulse fa-spinner');
-          });
+        Indigo.progressView.peg();
+        clone.save().then(function(doc) {
+          document.location = '/documents/' + doc.id + '/';
+        });
       }
-    }
+    },
+
+    stopMenuClick: function(e) {
+      // stop menu clicks on disabled items from doing anything
+      e.preventDefault();
+      e.stopImmediatePropagation();
+    },
   });
 })(window);
