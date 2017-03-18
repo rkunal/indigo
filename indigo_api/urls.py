@@ -2,6 +2,7 @@ from django.conf.urls import url, include
 from rest_framework.routers import DefaultRouter
 
 from . import views
+import indigo_api.es
 
 router = DefaultRouter(trailing_slash=False)
 router.register(r'documents', views.DocumentViewSet, base_name='document')
@@ -21,7 +22,7 @@ urlpatterns = [
     url(r'^render$', views.RenderView.as_view(), name='render'),
     url(r'^parse$', views.ParseView.as_view(), name='parse'),
     url(r'^analysis/link-terms$', views.LinkTermsView.as_view(), name='link-terms'),
-    url(r'^search$', 'indigo_api.es.search_view', name='search'),
+    url(r'^search$', indigo_api.es.search_view, name='search'),
 
     url(r'^', include(router.urls)),
 ]
